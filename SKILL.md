@@ -21,19 +21,56 @@ description: >
 ## 任何操作前必须执行的预检
 
 ```bash
-# 检测父级 symlink 模式
-APP_SKILLS=$(readlink -f ~/.claude/skills 2>/dev/null || echo ~/.claude/skills)
-SSOT=$(readlink -f ~/.agents/skills 2>/dev/null || echo ~/.agents/skills)
-if [ "$APP_SKILLS" = "$SSOT" ]; then
-  PARENT_SYMLINK=true  # ~/.claude/skills 就是 SSOT，切勿创建子 symlink!
-else
-  PARENT_SYMLINK=false
+# 检测父级 symlink（致命配置，必须修复）
+if [ -L ~/.claude/skills ]; then
+  echo "FATAL: ~/.claude/skills 是父级 symlink → $(readlink ~/.claude/skills)"
+  echo "此配置会导致 cc-switch 的 remove_path() 删除 SSOT 文件"
+  echo "必须立即修复为子级 symlink 模式"
+  exit 1
 fi
 ```
 
-**父级 symlink 模式下**：`~/.claude/skills` 本身指向 `~/.agents/skills`，两者是同一目录。
-此时在 `~/.claude/skills/<name>/` 创建指向 SSOT 的 symlink 等于 `~/.agents/skills/<name> → ~/.agents/skills/<name>` —— **自己指向自己，触发 "Too many levels of symbolic links" (os error 62)**。
-**父级 symlink 模式下同步步骤直接跳过** — 应用已经直接读 SSOT。
+### 🚨 父级 symlink 是致命错误，必须修复
+
+**`~/.claude/skills → ~/.agents/skills` 会导致 cc-switch 的 `remove_path()` 删除 SSOT 文件。**
+
+根因追踪（cc-switch v3.16.3 源码 `src-tauri/src/services/skill.rs`）：
+
+```rust
+fn remove_path(path: &Path) -> Result<()> {
+    if Self::is_symlink(path) {          // ← 检查路径本身的 symlink 元数据
+        fs::remove_file(path)?;          //     安全：只删链接
+    } else if path.is_dir() {           // ← path 通过父级 symlink 解析到 SSOT！
+        fs::remove_dir_all(path)?;       // ← 💀 删除 SSOT 真实目录！
+    }
+}
+```
+
+当父级是 symlink 时：
+- `is_symlink(~/.claude/skills/foo)` → **false**（symlink 在父级，不在 `foo` 自身）
+- `path.is_dir()` → **true**（OS 通过父级 symlink 解析到 `~/.agents/skills/foo`）
+- → `remove_dir_all()` 删除的是 SSOT！
+
+cc-switch 在以下场景调用 `remove_path()`：
+- 用户在 GUI 取消勾选某 skill 的 Claude → `remove_from_app()` → **SSOT 被删**
+- `sync_to_app()` 清理已禁用 skill → **批量删除 SSOT**
+
+**修复：必须使用子级 symlink，绝不能使用父级 symlink。**
+
+```bash
+# 错误（致命）:
+ln -s ~/.agents/skills ~/.claude/skills       # 父级 symlink → SSOT 会被删
+
+# 正确:
+mkdir ~/.claude/skills                          # 真实目录
+for d in ~/.agents/skills/*/; do
+  name=$(basename "$d")
+  [ "$name" = ".system" ] && continue
+  ln -s "$d" ~/.claude/skills/"$name"          # 每个 skill 独立 symlink
+done
+```
+
+子级 symlink 下：`is_symlink(~/.claude/skills/foo)` → **true** → `remove_file()` → 只删链接，SSOT 安全。
 - **禁止抑制错误**: 所有管理命令不得使用 `2>/dev/null`、`|| true` 或 `|| echo` 吞错误 — 错误是诊断信号，隐藏它们会导致级联失败
 
 ## Symlink 安全协议
