@@ -48,6 +48,33 @@ SSOT (~/.agents/skills/)  ──sync──>  ~/.claude/skills/
 
 **单向流动**: SSOT → 应用目录。反向修改会被覆盖。
 
+## 关键: 父级 symlink 检测
+
+**当 `~/.claude/skills` 本身是 symlink → `~/.agents/skills/` 时**，两者是同一个目录。
+此时 **绝对不能** 在 `~/.claude/skills/<name>/` 下创建指向 SSOT 的 symlink，
+因为那等于创建 `~/.agents/skills/<name> → ~/.agents/skills/<name>` —— **自己指向自己的死循环**。
+
+### 检测方法
+
+```bash
+APP_SKILLS=$(readlink -f ~/.claude/skills)
+SSOT=$(readlink -f ~/.agents/skills)
+if [ "$APP_SKILLS" = "$SSOT" ]; then
+  echo "父级 symlink: ~/.claude/skills 就是 SSOT，无需同步"
+  # 文件已经在正确位置，done!
+else
+  echo "需要同步: SSOT → 应用目录"
+fi
+```
+
+### 三种布局模式
+
+| 模式 | `~/.claude/skills` 类型 | 同步操作 |
+|------|------------------------|---------|
+| **父级 symlink** | `~/.claude/skills → ~/.agents/skills` | **无需操作** — 应用直接读 SSOT |
+| **子级 symlink** | 每个 `~/.claude/skills/<name>` → SSOT | 正常创建子 symlink |
+| **copy 模式** | 真实目录 | 从 SSOT 复制文件 |
+
 ## 写入规则 (必须遵守)
 
 | 位置 | 是否可直接写入 | 说明 |
@@ -82,12 +109,18 @@ VALUES
 # Step 3: 更新锁文件
 # (使用 jq 操作 lock-file，见 lock-file.md)
 
-# Step 4: 同步到应用目录 (symlink, autosync 模式)
+# Step 4: 同步到应用目录 (必须先检测父级 symlink!)
 APP_SKILLS=~/.claude/skills
 SSOT=~/.agents/skills
-rm -rf "$APP_SKILLS/my-skill"
-ln -s "$SSOT/my-skill" "$APP_SKILLS/my-skill" 2>/dev/null || \
-  cp -r "$SSOT/my-skill" "$APP_SKILLS/my-skill"
+
+# 关键: 检查父级是否是 symlink 到 SSOT
+if [ "$(readlink -f "$APP_SKILLS")" = "$(readlink -f "$SSOT")" ]; then
+  echo "父级 symlink 模式: 应用直接读 SSOT，无需同步"
+else
+  rm -rf "$APP_SKILLS/my-skill"
+  ln -s "$SSOT/my-skill" "$APP_SKILLS/my-skill" 2>/dev/null || \
+    cp -r "$SSOT/my-skill" "$APP_SKILLS/my-skill"
+fi
 ```
 
 ## 清理散落文件

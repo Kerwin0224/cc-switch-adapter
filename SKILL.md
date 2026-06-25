@@ -17,6 +17,23 @@ description: >
 - **数据库**: `~/.cc-switch/cc-switch.db` — skills 表、mcp_servers 表、skill_repos 表
 - **锁文件**: `~/.agents/.skill-lock.json` — 源追踪信息（owner/repo/branch）
 - **应用目录只做目标**: `~/.claude/skills/`、`~/.codex/skills/` 等仅从 SSOT 复制/链接，**绝不直接写入**
+
+## 任何操作前必须执行的预检
+
+```bash
+# 检测父级 symlink 模式
+APP_SKILLS=$(readlink -f ~/.claude/skills 2>/dev/null || echo ~/.claude/skills)
+SSOT=$(readlink -f ~/.agents/skills 2>/dev/null || echo ~/.agents/skills)
+if [ "$APP_SKILLS" = "$SSOT" ]; then
+  PARENT_SYMLINK=true  # ~/.claude/skills 就是 SSOT，切勿创建子 symlink!
+else
+  PARENT_SYMLINK=false
+fi
+```
+
+**父级 symlink 模式下**：`~/.claude/skills` 本身指向 `~/.agents/skills`，两者是同一目录。
+此时在 `~/.claude/skills/<name>/` 创建指向 SSOT 的 symlink 等于 `~/.agents/skills/<name> → ~/.agents/skills/<name>` —— **自己指向自己，触发 "Too many levels of symbolic links" (os error 62)**。
+**父级 symlink 模式下同步步骤直接跳过** — 应用已经直接读 SSOT。
 - **禁止抑制错误**: 所有管理命令不得使用 `2>/dev/null`、`|| true` 或 `|| echo` 吞错误 — 错误是诊断信号，隐藏它们会导致级联失败
 
 ## Symlink 安全协议
