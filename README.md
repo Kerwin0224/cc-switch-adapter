@@ -29,9 +29,21 @@ But when you install skills through external tools — or tell Claude Code to "i
 | Operation | Without adapter | With adapter |
 |-----------|----------------|--------------|
 | Install skill | → `~/.claude/skills/` (broken) | → SSOT → DB → lock file → app dirs |
+| Migrate existing | Stays orphaned | → SSOT copy → DB insert → app symlink |
 | Uninstall skill | → rm from app dir (orphans in DB) | → DB delete → SSOT delete → lock file → app dirs |
 | Add MCP | → app config file directly | → DB → sync to app config files |
 | Clean up | Manual hunt-and-delete | → Audit → migrate to SSOT → rebuild links |
+
+### Parent symlink detection (critical)
+
+Many users symlink `~/.claude/skills` → `~/.agents/skills` so Claude Code reads directly from the SSOT. In this mode, creating a child symlink like `~/.claude/skills/foo` → `~/.agents/skills/foo` creates a **self-referencing symlink** that triggers `Too many levels of symbolic links (os error 62)`. The adapter detects parent-level symlinks and skips child symlink creation.
+
+```
+~/.claude/skills  ──(symlink)──▶  ~/.agents/skills/
+                                         │
+    DO NOT create: ~/.claude/skills/foo → ~/.agents/skills/foo
+         (that's ~/.agents/skills/foo → ~/.agents/skills/foo 😵)
+```
 
 ## Architecture
 
@@ -72,11 +84,12 @@ Without all three, cc-switch cannot detect updates. The adapter ensures all thre
 
 ```
 cc-switch-adapter/
-├── SKILL.md           # Main skill — operation steps + completion criteria
+├── SKILL.md           # Main skill — 6 operations, symlink safety protocol, 5-point completion criteria
 ├── db-schema.md       # Reference: SQLite table schemas + INSERT examples
 ├── lock-file.md       # Reference: .skill-lock.json format + jq operations
-├── file-layout.md     # Reference: full filesystem layout + write rules
-└── README.md          # This file
+├── file-layout.md     # Reference: full filesystem layout, parent symlink mode, write rules
+├── README.md          # This file
+└── .gitignore
 ```
 
 ## Installation
@@ -139,6 +152,9 @@ Just use Claude Code normally. The skill intercepts any skill or MCP management 
 ```
 You: "install the memory skill from anthropics/skills"
      → Adapter: downloads to SSOT, writes DB, updates lock file, syncs app dirs
+
+You: "adapt my existing skills to cc-switch"
+     → Adapter: discovers orphaned skills, copies to SSOT, recovers source info, replaces app copies with symlinks
 
 You: "add an MCP server for filesystem access"
      → Adapter: inserts into mcp_servers table, writes app config files
