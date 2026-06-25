@@ -21,13 +21,15 @@ description: >
 ## 任何操作前必须执行的预检
 
 ```bash
-# 检测父级 symlink（致命配置，必须修复）
-if [ -L ~/.claude/skills ]; then
-  echo "FATAL: ~/.claude/skills 是父级 symlink → $(readlink ~/.claude/skills)"
-  echo "此配置会导致 cc-switch 的 remove_path() 删除 SSOT 文件"
-  echo "必须立即修复为子级 symlink 模式"
-  exit 1
-fi
+# 检查所有应用目录是否都是真实目录（无父级 symlink）
+for app_dir in ~/.claude/skills ~/.codex/skills ~/.gemini/skills \
+               ~/.config/opencode/skills ~/.hermes/skills; do
+  if [ -L "$app_dir" ]; then
+    echo "FATAL: $app_dir 是父级 symlink → $(readlink $app_dir)"
+    echo "cc-switch 会对该 app sync 时通过 remove_dir_all() 删除 SSOT 文件"
+    exit 1
+  fi
+done
 ```
 
 ### 🚨 父级 symlink 是致命错误，必须修复
