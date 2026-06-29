@@ -5,3 +5,6 @@
 *.tmp
 *.swp
 *~
+
+# OMC tooling state
+.omc/
