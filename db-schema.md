@@ -6,7 +6,7 @@
 
 **canonical-id**：`owner/repo:<path>` | `local:<name>`（无长期 bare；`<path>` 可为短名或仓库内相对路径；**禁止** `owner/repo:.`）。  
 **unified-row**：一行 + 多列 **per-app enable**。  
-**park**：所有 `enabled_*=0`。
+**park**（adapter-policy）：所有 `enabled_*=0`。点名 app 时用 **install-enable**，不是「官方安装=全关」。
 
 ```sql
 -- 以本机 .schema 为准；缺列勿写
@@ -88,8 +88,8 @@ id 为 PK 时：读出旧行 → `INSERT` 新 id（enable 原样）→ `DELETE` 
 ## profiles（project-slot）
 
 **live** = `skills.enabled_*=1`（用户此刻启用）。  
-**project-slot** = `payload.skills.<app>` 数组 = 某次拍照/离开 auto-save 的副本，**可脏可偏胖**。  
-slot 有而 live 无 → 默认「快照偏胖」，**不要**当成漏开去 enable（见 SKILL **P**）。
+**project-slot** = `payload.skills.<app>` 数组 = 某次拍照/离开 auto-save 的副本，可脏。  
+**fat snapshot**（`set(slot)−set(live)`）→ 见 SKILL 顶部**唯一正向规则**（resnap/scrub JSON；live 只经 dispatch 或确认后的 apply）。
 
 ```sql
 SELECT id, name, payload FROM profiles;

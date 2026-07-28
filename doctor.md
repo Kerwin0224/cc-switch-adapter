@@ -22,7 +22,8 @@ python3 "$SKILL_DIR/doctor.py" --full           # 全量重算 content_hash
 | **SSOT** | `skillStorageLocation` → 内容根；app 仅投影 |
 | **child-link** | enable 后子项链/拷；**禁** app `skills` 父目录整链 SSOT |
 | **live ≠ slot** | enable+投影 = live；profile JSON = 可脏快照 |
-| **park** | adapter-policy 默认可全 `enabled_*=0`（非官方 install 默认） |
+| **park** | adapter-policy：全 `enabled_*=0`（非官方 **install-enable**） |
+| **fat snapshot** | 见 SKILL 唯一正向规则；本检查只报告，不 enable |
 
 ## 严重度与 category
 
@@ -40,8 +41,6 @@ python3 "$SKILL_DIR/doctor.py" --full           # 全量重算 content_hash
 | **design** | D0（缺 runtime）、D1 非 unified、D3、D4、D6、D9、D11、D13、D14 |
 | **hygiene** | D2、D5、D7、D8、D12 |
 | **policy** | D10、D15、D16 |
-
-**fat snapshot**（slot⊃live）= policy；**禁止**解读为漏 enable。
 
 ## 检查目录（id 稳定）
 
@@ -63,7 +62,7 @@ python3 "$SKILL_DIR/doctor.py" --full           # 全量重算 content_hash
 | `D12.lock` | **INFO**/hygiene | GitHub 行缺锁键等 | — |
 | `D13.slot-dangling` | ERROR | slot id 不在 skills | slot |
 | `D14.slot-id` | ERROR | slot 内非法 id | slot |
-| `D15.fat-snapshot` | WARN/INFO | **bound** slot≠live → WARN resnap candidate, not enable；**unbound** slot⊃live → INFO target set | slot（not enable） |
+| `D15.fat-snapshot` | WARN/INFO | **bound** fat → WARN resnap candidate；**unbound** → INFO；处置见 SKILL fat 正向规则 | slot |
 | `D16.binding` | INFO | `current_profile_id_*`（binding≠applied） | — |
 
 ## 报告格式（seam）
@@ -89,8 +88,8 @@ next: <verbs | clean[; hygiene present]>
 - 执行 `doctor.py`（可加 `--root` / `--full`）  
 - 报告含头、counts、`[LEVEL:category]` findings、`next:`  
 - **零**写 DB/磁盘/锁  
-- fat **未**写成应 enable  
-- 本机 profile 显示名只出现在当次报告，不写进 skill 正文  
+- fat 只报告，处置指向 SKILL fat 正向规则  
+- 本机 profile 显示名只出现在当次报告  
 
 ## 测试
 
