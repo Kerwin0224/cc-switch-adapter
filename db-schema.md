@@ -1,165 +1,165 @@
-# cc-switch 数据库 Schema
+# DB 参考（本机 `.schema` 优先）
 
-数据库路径: `~/.cc-switch/cc-switch.db` (SQLite)
+`~/.cc-switch/cc-switch.db`。先跑 `.schema skills`；下列为常见现行列。
 
-## skills 表
+## skills
+
+**canonical-id**：`owner/repo:<path>` | `local:<name>`（无长期 bare；`<path>` 可为短名或仓库内相对路径；**禁止** `owner/repo:.`）。  
+**unified-row**：一行 + 多列 **per-app enable**。  
+**park**：所有 `enabled_*=0`。
 
 ```sql
+-- 以本机 .schema 为准；缺列勿写
 CREATE TABLE skills (
-    id TEXT PRIMARY KEY,          -- "owner/repo:directory" 或 "local:directory"
-    name TEXT NOT NULL,           -- 显示名称 (来自 SKILL.md frontmatter)
-    description TEXT,             -- 描述
-    directory TEXT NOT NULL,      -- SSOT 中的子目录名 (安装名)
-    repo_owner TEXT,              -- GitHub 用户/组织 (本地 skill 为 NULL)
-    repo_name TEXT,               -- 仓库名 (本地 skill 为 NULL)
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    directory TEXT NOT NULL,
+    repo_owner TEXT,
+    repo_name TEXT,
     repo_branch TEXT DEFAULT 'main',
-    readme_url TEXT,              -- GitHub blob URL 指向 SKILL.md
+    readme_url TEXT,
     enabled_claude BOOLEAN NOT NULL DEFAULT 0,
     enabled_codex BOOLEAN NOT NULL DEFAULT 0,
     enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+    enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
     enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-    enabled_openclaw BOOLEAN NOT NULL DEFAULT 0,
     enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-    installed_at INTEGER NOT NULL DEFAULT 0,  -- Unix 时间戳
-    content_hash TEXT,            -- SHA-256 目录哈希 (用于更新检测)
+    installed_at INTEGER NOT NULL DEFAULT 0,
+    content_hash TEXT,
     updated_at INTEGER NOT NULL DEFAULT 0
 );
 ```
 
-> **6 个 enabled_ 列对应 6 个同步目标**：claude / codex / gemini / opencode / openclaw / hermes。注意没有 `enabled_claude_desktop`——ClaudeDesktop 的 `sync_to_app_dir` 直接 return（skill.rs:1587），不实际同步 skill 文件。
-
-## content_hash 算法（关键）
-
-`compute_dir_hash()`（skill.rs:830-850）计算目录指纹，用于更新检测：
-
-1. 递归收集目录下**所有非隐藏文件**——文件名以 `.` 开头的跳过（skill.rs:860），所以 `.git/`、`.gitignore`、`.DS_Store` 都不计入
-2. 文件列表**按路径排序**
-3. 对每个文件：`hasher.update(相对路径)` → `hasher.update(\0)` → `hasher.update(文件内容)` → `hasher.update(\0)`
-4. 输出 SHA-256 的十六进制字符串
-
-**含义**：只有 skill 的内容文件（SKILL.md 等）变化才会改变 hash。`.git` 目录的变化（如 `git pull` 拉到新 commit 但内容文件未变）**不会**改变 hash——但若内容文件变了而 DB hash 没刷新，`check_updates()` 就会误报。
-
-## check_updates 如何用 content_hash（不一致的根因）
-
-`check_updates()`（skill.rs:877-988）对每个 skill：
-
-1. **早返回**：`repo_owner` 或 `repo_name` 为 None → `continue` 跳过（skill.rs:890）。所以 `local:*` 的 skill 永远不检测更新。
-2. **本地 hash 优先信任 DB**（skill.rs:956-972）：
-   - DB 有 `content_hash` → 直接用 DB 的值（**哪怕过期**）
-   - DB 为空 → 实时 `compute_dir_hash(SSOT)` 并 `update_skill_hash()` 回写
-3. 拿本地 hash 跟远程 hash 比，不等则报"有更新"
-
-**这就是"本地与云端不一致"的机械根因**：`git pull` 更新了 SSOT 内容文件，但 DB 的 `content_hash` 还是旧值。`check_updates` 信任旧 DB hash → 跟远程新 hash 不等 → 误报"有更新"。修复方法是 reconcile 操作强制刷新 DB hash（见 SKILL.md 操作 7）。
-
-## backfill_content_hashes（cc-switch 启动时自动补算）
-
-`backfill_content_hashes()`（skill.rs:1119-1147）在 cc-switch 启动时调用，**只为 content_hash 为空的 skill 补算**——已 有 hash 的不刷新。所以单纯重启 cc-switch 不会修复"过期 hash"，必须先把 DB hash 置 NULL 再重启，强制重算。
-
-## update_skill_hash（reconcile 用）
-
 ```sql
--- cc-switch 内部: db.update_skill_hash(id, hash, updated_at)
--- 等价 SQL:
-UPDATE skills SET content_hash = '<sha256>', updated_at = <unix_ts> WHERE id = '<id>';
+SELECT id, directory, repo_owner, repo_name FROM skills
+WHERE id NOT LIKE '%/%' AND id NOT LIKE 'local:%';  -- bare → 分支 M
 ```
 
-手动 reconcile 应急时，可把 `content_hash` 置 NULL、`updated_at` 置 0，重启 cc-switch 触发 `backfill_content_hashes()` 重算。
-
-## INSERT 示例
-
-### GitHub 来源 skill
+### park INSERT（GitHub）
 
 ```sql
-INSERT OR REPLACE INTO skills
+INSERT INTO skills
   (id, name, description, directory, repo_owner, repo_name, repo_branch,
-   readme_url, enabled_claude, enabled_codex, enabled_opencode, enabled_hermes,
-   installed_at, content_hash, updated_at)
+   readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
+   enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at)
 VALUES
-  ('anthropics/skills:skills/memory', 'Memory Skill', 'Manage persistent memory',
-   'memory', 'anthropics', 'skills', 'main',
-   'https://github.com/anthropics/skills/blob/main/skills/memory/SKILL.md',
-   1, 0, 0, 0,
-   CAST(strftime('%s', 'now') AS INTEGER),
-   NULL, 0);   -- content_hash 传 NULL，cc-switch 启动时 backfill
+  ('owner/repo:dirname', 'Name', 'desc', 'dirname', 'owner', 'repo', 'main',
+   'https://github.com/owner/repo/blob/main/…/SKILL.md',
+   0, 0, 0, 0, 0, 0,
+   CAST(strftime('%s','now') AS INTEGER), NULL, 0);
 ```
 
-### 本地 ZIP 导入 skill（无源追踪，无法检测更新）
+已存在同行：用 `UPDATE` 元数据，保留 `enabled_*`。`INSERT OR REPLACE` 会冲掉 enable。
+
+### content_hash
+
+非隐藏文件、相对路径排序、对每个文件 `path\0content\0`，SHA-256 hex：
+
+```bash
+python3 - <<'PY'
+import hashlib, os, sys
+from pathlib import Path
+root = Path(sys.argv[1]).resolve()
+files = []
+for dp, dns, fns in os.walk(root):
+    dns[:] = [d for d in dns if not d.startswith('.')]
+    for fn in fns:
+        if fn.startswith('.'): continue
+        files.append(Path(dp) / fn)
+files.sort()
+h = hashlib.sha256()
+for fp in files:
+    rel = fp.relative_to(root).as_posix()
+    h.update(rel.encode()); h.update(b'\0')
+    h.update(fp.read_bytes()); h.update(b'\0')
+print(h.hexdigest())
+PY
+"$SSOT/<directory>"
+```
+
+`check_updates` 信 DB 非空 hash；backfill 只补 NULL → 过期非空必须 `UPDATE`。
+
+### M：id 升级（保留 enable）
+
+id 为 PK 时：读出旧行 → `INSERT` 新 id（enable 原样）→ `DELETE` 旧 id。  
+目标 id 已存在：各 `enabled_*` 按位或后删旧。
+
+## profiles（project-slot）
+
+**live** = `skills.enabled_*=1`（用户此刻启用）。  
+**project-slot** = `payload.skills.<app>` 数组 = 某次拍照/离开 auto-save 的副本，**可脏可偏胖**。  
+slot 有而 live 无 → 默认「快照偏胖」，**不要**当成漏开去 enable（见 SKILL **P**）。
 
 ```sql
-INSERT OR REPLACE INTO skills
-  (id, name, description, directory, repo_owner, repo_name, repo_branch,
-   readme_url, enabled_claude, installed_at, content_hash, updated_at)
-VALUES
-  ('local:my-custom-skill', 'My Custom Skill', 'A custom skill',
-   'my-custom-skill', NULL, NULL, NULL, NULL, 1,
-   CAST(strftime('%s', 'now') AS INTEGER), NULL, 0);
+SELECT id, name, payload FROM profiles;
+SELECT value FROM settings WHERE key = 'current_profile_id_claude';  -- 绑定名，≠ live 已 apply
+SELECT id FROM skills WHERE enabled_claude = 1;  -- live 真相
 ```
 
-## 常用查询
+`payload.skills.<app>`：`null` 未快照｜`[]` 空集｜`[canonical-id,…]` 目标。引用 **id** 不是 directory。  
+卸载/M 后扫数组删悬空 id。
 
-```sql
--- 所有已安装 skill
-SELECT id, name, directory, repo_owner, repo_name, repo_branch FROM skills ORDER BY name;
+### resnap：用 live 覆盖某项目 slot（不改 enable）
 
--- 无源追踪的（无法检测更新，check_updates 跳过）
-SELECT id, name, directory FROM skills WHERE repo_owner IS NULL OR repo_name IS NULL;
+`<profile-name>` / `<app_key>` / `<en_col>` 由用户点名或本机 `profiles` + app 表解析，**不写死**。
 
--- 某 skill 启用了哪些 app（动态检测用）
-SELECT enabled_claude,enabled_codex,enabled_gemini,enabled_opencode,enabled_openclaw,enabled_hermes
-FROM skills WHERE directory='<name>';
+```bash
+python3 - <<'PY'
+import json, sqlite3, sys
+from pathlib import Path
+# argv: profile-name app_key en_col   e.g. MyProject claude enabled_claude
+name, app_key, en_col = sys.argv[1], sys.argv[2], sys.argv[3]
+con = sqlite3.connect(Path.home()/".cc-switch"/"cc-switch.db")
+live = [r[0] for r in con.execute(
+    f"SELECT id FROM skills WHERE {en_col}=1 ORDER BY directory"
+)]
+row = con.execute("SELECT id, payload FROM profiles WHERE name=?", (name,)).fetchone()
+if not row:
+    raise SystemExit(f"unknown profile: {name!r}; list: "
+                     + str([r[0] for r in con.execute("SELECT name FROM profiles")]))
+pid, raw = row
+payload = json.loads(raw)
+payload.setdefault("skills", {})[app_key] = live
+con.execute(
+    "UPDATE profiles SET payload=?, updated_at=CAST(strftime('%s','now') AS INTEGER) WHERE id=?",
+    (json.dumps(payload, ensure_ascii=False), pid),
+)
+con.commit()
+print(name, app_key, "→", len(live), "ids (live only)")
+PY
+# python3 resnap.py "<profile-name>" claude enabled_claude
 ```
 
-## mcp_servers 表
+### add id 到 slot（点名项目；默认不 apply）
 
-```sql
-CREATE TABLE mcp_servers (
-    id TEXT PRIMARY KEY,          -- 用户定义的标识 (如 "filesystem")
-    name TEXT NOT NULL,           -- 显示名称
-    server_config TEXT NOT NULL,  -- JSON: {"command":"npx","args":[...],"env":{}}
-    description TEXT,
-    homepage TEXT,
-    docs TEXT,
-    tags TEXT NOT NULL DEFAULT '[]',  -- JSON 数组
-    enabled_claude BOOLEAN NOT NULL DEFAULT 0,
-    enabled_codex BOOLEAN NOT NULL DEFAULT 0,
-    enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
-    enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-    enabled_openclaw BOOLEAN NOT NULL DEFAULT 0,
-    enabled_hermes BOOLEAN NOT NULL DEFAULT 0
-);
+```bash
+python3 - <<'PY'
+import json, sqlite3, sys
+from pathlib import Path
+# argv: profile-name skill-id app_key
+name, skill_id, app_key = sys.argv[1], sys.argv[2], sys.argv[3]
+con = sqlite3.connect(Path.home()/".cc-switch"/"cc-switch.db")
+row = con.execute("SELECT id, payload FROM profiles WHERE name=?", (name,)).fetchone()
+if not row:
+    raise SystemExit(f"unknown profile: {name!r}")
+pid, raw = row
+payload = json.loads(raw)
+cur = payload.setdefault("skills", {}).get(app_key)
+if cur is None:
+    cur = []
+    payload["skills"][app_key] = cur
+if skill_id not in cur:
+    cur.append(skill_id)
+con.execute(
+    "UPDATE profiles SET payload=?, updated_at=CAST(strftime('%s','now') AS INTEGER) WHERE id=?",
+    (json.dumps(payload, ensure_ascii=False), pid),
+)
+con.commit()
+PY
+# python3 add-slot.py "<profile-name>" "owner/repo:dir" claude
 ```
 
-### INSERT 示例
+## mcp_servers / skill_repos
 
-```sql
-INSERT OR REPLACE INTO mcp_servers
-  (id, name, server_config, description, enabled_claude, enabled_codex)
-VALUES
-  ('filesystem', 'Filesystem',
-   '{"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/Users/kerwinwjyan"]}',
-   'Access local filesystem', 1, 1);
-```
-
-## skill_repos 表
-
-```sql
-CREATE TABLE skill_repos (
-    owner TEXT NOT NULL,
-    name TEXT NOT NULL,
-    branch TEXT NOT NULL DEFAULT 'main',
-    enabled BOOLEAN NOT NULL DEFAULT 1,
-    PRIMARY KEY (owner, name)
-);
-```
-
-```sql
-INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled)
-VALUES ('anthropics', 'skills', 'main', 1);
-```
-
-## 关键规则
-
-1. **skill 的 `id` 决定能否更新**：`"owner/repo:dir"` 格式才能过 `check_updates()` 的早返回。`"local:*"` 被跳过。
-2. **MCP 没有源追踪**：mcp_servers 表无 repo_owner/repo_name/content_hash，无法检测上游更新。
-3. **不可手动赋值 `content_hash`**：cc-switch 启动时 `backfill_content_hashes()` 只补空值。传 NULL 让它自动算。
-4. **过期 hash 不会自动刷新**：`backfill` 只补空值，已有值不动。修复过期 hash 必须先置 NULL 再重启（reconcile 操作）。
+以 `.schema` 为准。MCP 默认 park；无 content_hash 管道。
