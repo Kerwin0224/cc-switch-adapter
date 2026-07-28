@@ -157,6 +157,8 @@ class Doctor:
         self.sync: str | None = None
         self.loc: str | None = None
         self.n_skills = 0
+        self.bound_names: set[str] = set()
+        self.binding_notes: list[str] = []
         self._stopped = False
 
     def add(self, level: str, code: str, msg: str, category: str | None = None):
@@ -472,7 +474,9 @@ class Doctor:
     def _d16_d13_d15(
         self, con: sqlite3.Connection, skills: list, cols: set[str], tables: set[str]
     ) -> None:
-        bound_names: set[str] = set()
+        # D16: binding is status, not a finding — fold into baseline only.
+        self.bound_names: set[str] = set()
+        self.binding_notes: list[str] = []
         if "settings" in tables:
             for (key,) in con.execute(
                 "SELECT key FROM settings WHERE key LIKE 'current_profile_id_%'"
@@ -487,12 +491,10 @@ class Doctor:
                     ).fetchone()
                     name = nrow[0] if nrow else None
                     if name:
-                        bound_names.add(name)
-                self.add(
-                    "INFO",
-                    "D16.binding",
-                    f"{key}={val} name={name!r} (binding only)",
-                )
+                        self.bound_names.add(name)
+                scope = key.removeprefix("current_profile_id_") or key
+                label = name if name else (val or "—")
+                self.binding_notes.append(f"{scope}={label!r}")
 
         live_by_app: dict[str, set[str]] = {}
         for app, col in EN_COL.items():
@@ -517,10 +519,11 @@ class Doctor:
                 if arr is None:
                     continue
                 if not isinstance(arr, list):
+                    # malformed JSON shape — always report
                     self.add(
-                        "INFO",
-                        "D15.fat-snapshot",
-                        f"profile={row['name']!r} skills.{app} not list",
+                        "ERROR",
+                        "D14.slot-id",
+                        f"profile={row['name']!r} skills.{app} not list → slot",
                     )
                     continue
                 slot = set(arr)
@@ -537,33 +540,27 @@ class Doctor:
                             "D14.slot-id",
                             f"profile={row['name']!r} app={app} id={sid!r} → slot",
                         )
+                # Different unbound profiles *should* differ from current live.
+                # Only the bound profile's slot vs live is actionable noise/hygiene.
+                is_bound = row["name"] in self.bound_names
+                if not is_bound:
+                    continue
                 live = live_by_app.get(app, set())
                 fat = slot - live
                 missing = live - slot
-                is_bound = row["name"] in bound_names
                 if fat:
-                    lvl = "WARN" if is_bound else "INFO"
-                    hint = (
-                        "→ slot resnap candidate, not enable"
-                        if is_bound
-                        else "(unbound target set; do not overwrite with live)"
-                    )
                     self.add(
-                        lvl,
+                        "WARN",
                         "D15.fat-snapshot",
-                        f"profile={row['name']!r} app={app} fat={len(fat)} (slot>live) {hint}",
+                        f"profile={row['name']!r} app={app} fat={len(fat)} "
+                        f"(slot>live) → slot resnap candidate, not enable",
                     )
                 if missing and app in SLOT_APPS:
-                    lvl = "WARN" if is_bound else "INFO"
-                    hint = (
-                        "→ slot resnap candidate"
-                        if is_bound
-                        else "(unbound; leave-auto-save writes departing profile)"
-                    )
                     self.add(
-                        lvl,
+                        "WARN",
                         "D15.fat-snapshot",
-                        f"profile={row['name']!r} app={app} live_only={len(missing)} {hint}",
+                        f"profile={row['name']!r} app={app} live_only={len(missing)} "
+                        f"→ slot resnap candidate",
                     )
 
     def _emit(self) -> int:
@@ -578,9 +575,10 @@ class Doctor:
         print(
             f"doctor {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
         )
+        bind = f"  bind={','.join(self.binding_notes)}" if self.binding_notes else ""
         print(
             f"baseline: user_version={self.ver} ssot={self.ssot} "
-            f"sync={self.sync} skills={self.n_skills} loc={self.loc}"
+            f"sync={self.sync} skills={self.n_skills} loc={self.loc}{bind}"
         )
         print(
             f"FATAL {counts['FATAL']}  ERROR {counts['ERROR']}  "

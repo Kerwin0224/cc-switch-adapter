@@ -40,7 +40,7 @@ python3 "$SKILL_DIR/doctor.py" --full           # 全量重算 content_hash
 |----------|-----------|
 | **design** | D0（缺 runtime）、D1 非 unified、D3、D4、D6、D9、D11、D13、D14 |
 | **hygiene** | D2、D5、D7、D8、D12 |
-| **policy** | D10、D15、D16 |
+| **policy** | D10、D15（仅 bound） |
 
 ## 检查目录（id 稳定）
 
@@ -62,14 +62,14 @@ python3 "$SKILL_DIR/doctor.py" --full           # 全量重算 content_hash
 | `D12.lock` | **INFO**/hygiene | GitHub 行缺锁键等 | — |
 | `D13.slot-dangling` | ERROR | slot id 不在 skills | slot |
 | `D14.slot-id` | ERROR | slot 内非法 id | slot |
-| `D15.fat-snapshot` | WARN/INFO | **bound** fat → WARN resnap candidate；**unbound** → INFO；处置见 SKILL fat 正向规则 | slot |
-| `D16.binding` | INFO | `current_profile_id_*`（binding≠applied） | — |
+| `D15.fat-snapshot` | WARN | **仅 bound** profile 的 slot≠live → resnap candidate（**not enable**）。未绑定 profile 与 live 不同是多项目常态，**不报** | slot |
+| `D16.binding` | — | 不进 findings；写入 baseline `bind=` | — |
 
 ## 报告格式（seam）
 
 ```
 doctor <iso-time>
-baseline: user_version=N  ssot=<path>  sync=<method>  skills=N  loc=<loc>
+baseline: user_version=N  ssot=<path>  sync=<method>  skills=N  loc=<loc>  bind=claude='…'
 FATAL n  ERROR n  WARN n  INFO n  OK n
 categories: design_ERROR=n hygiene_notes=n (FATAL always design-critical)
 

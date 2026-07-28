@@ -81,23 +81,24 @@ class TestDoctorReportSeam(unittest.TestCase):
         self.assertIsNotNone(re.search(r"^next:.*\bmigrate\b", r.stdout, re.M), r.stdout)
         self.assertIsNone(re.search(r"^next: clean", r.stdout, re.M), r.stdout)
 
-    def test_fat_bound_warn_unbound_info_no_enable_hint(self):
+    def test_fat_bound_warn_unbound_silent_no_enable_hint(self):
         r = run_doctor(root=FIX / "fat_profiles")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         lines = finding_lines(r.stdout)
-        fat = [ln for ln in lines if "D15.fat-snapshot" in ln and "fat=" in ln]
-        # profile=repr(name) → profile='bound-project'
+        fat = [ln for ln in lines if "D15.fat-snapshot" in ln]
         bound = [ln for ln in fat if "bound-project" in ln]
         other = [ln for ln in fat if "other-project" in ln]
-        self.assertTrue(fat, r.stdout)
-        self.assertTrue(bound, f"fat={fat!r}\n{r.stdout}")
-        self.assertTrue(other, f"fat={fat!r}\n{r.stdout}")
+        # unbound profiles intentionally differ — not findings
+        self.assertEqual(other, [], r.stdout)
+        self.assertTrue(bound, f"expected bound D15 WARN\n{r.stdout}")
         self.assertTrue(all(ln.startswith("[WARN:policy]") for ln in bound), bound)
-        self.assertTrue(all(ln.startswith("[INFO:policy]") for ln in other), other)
-        # never recommend bulk enable
-        joined = "\n".join(fat).lower()
+        joined = "\n".join(bound).lower()
         self.assertNotIn("bulk enable", joined)
         self.assertIn("not enable", "\n".join(bound))
+        # D16 is baseline status, not a finding line
+        self.assertFalse(any("D16.binding" in ln for ln in lines), r.stdout)
+        self.assertIn("bind=", r.stdout)
+        self.assertIn("bound-project", r.stdout)
         self.assertIsNotNone(re.search(r"^next: clean", r.stdout, re.M), r.stdout)
 
     def test_finding_line_format(self):
