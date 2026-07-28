@@ -12,7 +12,6 @@ stdlib only. Never writes DB/disk/lock.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sqlite3
@@ -20,6 +19,10 @@ import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+
+# single hash SSOT (shared with pipe/reconcile)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from content_hash import dir_hash  # noqa: E402
 
 # --- category matrix (map: Freeze residual seam decisions) ---
 # design | hygiene | policy; minor overrides OK if spirit holds
@@ -92,30 +95,6 @@ def is_canonical(i: str) -> bool:
     if not right or right in (".", "..") or right.startswith("/"):
         return False
     return True
-
-
-def dir_hash(root: Path) -> str | None:
-    if not root.is_dir():
-        return None
-    files: list[Path] = []
-    for dp, dns, fns in os.walk(root):
-        dns[:] = [d for d in dns if not d.startswith(".")]
-        for fn in fns:
-            if fn.startswith("."):
-                continue
-            files.append(Path(dp) / fn)
-    files.sort()
-    h = hashlib.sha256()
-    for fp in files:
-        rel = fp.relative_to(root).as_posix()
-        h.update(rel.encode())
-        h.update(b"\0")
-        try:
-            h.update(fp.read_bytes())
-            h.update(b"\0")
-        except OSError:
-            return None
-    return h.hexdigest()
 
 
 def category_for(code: str) -> str:
