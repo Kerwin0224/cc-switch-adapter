@@ -2,7 +2,7 @@
 
 **doctor** = 只读；输出 finding + `next:`；**不**自动修。用户点名「修」再走 mutate 动词（migrate / dispatch / slot / register…）。
 
-**实现 SSOT**：包根 [`doctor.py`](doctor.py)（stdlib only）。**不要**再手写「等价实现」。
+**实现 SSOT**：包根 [`doctor.py`](doctor.py)（stdlib only）。hash 算法见 [`content_hash.py`](content_hash.py)。
 
 ```bash
 SKILL_DIR=…/cc-switch-adapter   # 本 skill 目录

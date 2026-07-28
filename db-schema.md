@@ -52,33 +52,17 @@ VALUES
 
 已存在同行：用 `UPDATE` 元数据，保留 `enabled_*`。`INSERT OR REPLACE` 会冲掉 enable。
 
-### content_hash
+### content_hash（唯一实现）
 
-非隐藏文件、相对路径排序、对每个文件 `path\0content\0`，SHA-256 hex：
+算法 SSOT：[content_hash.py](content_hash.py)（doctor / reconcile / pipe 共用）。
 
 ```bash
-python3 - <<'PY'
-import hashlib, os, sys
-from pathlib import Path
-root = Path(sys.argv[1]).resolve()
-files = []
-for dp, dns, fns in os.walk(root):
-    dns[:] = [d for d in dns if not d.startswith('.')]
-    for fn in fns:
-        if fn.startswith('.'): continue
-        files.append(Path(dp) / fn)
-files.sort()
-h = hashlib.sha256()
-for fp in files:
-    rel = fp.relative_to(root).as_posix()
-    h.update(rel.encode()); h.update(b'\0')
-    h.update(fp.read_bytes()); h.update(b'\0')
-print(h.hexdigest())
-PY
-"$SSOT/<directory>"
+python3 "$SKILL_DIR/content_hash.py" "$SSOT/<directory>"
+# → hex；再 UPDATE skills SET content_hash=…
 ```
 
-`check_updates` 信 DB 非空 hash；backfill 只补 NULL → 过期非空必须 `UPDATE`。
+非隐藏文件、相对路径排序、`path\0content\0` → SHA-256。  
+`check_updates` 信 DB 非空 hash；过期非空必须 `UPDATE`。
 
 ### M：id 升级（保留 enable）
 
@@ -88,8 +72,7 @@ id 为 PK 时：读出旧行 → `INSERT` 新 id（enable 原样）→ `DELETE` 
 ## profiles（project-slot）
 
 **live** = `skills.enabled_*=1`（用户此刻启用）。  
-**project-slot** = `payload.skills.<app>` 数组 = 某次拍照/离开 auto-save 的副本，可脏。  
-**fat snapshot**（`set(slot)−set(live)`）→ 见 SKILL 顶部**唯一正向规则**（resnap/scrub JSON；live 只经 dispatch 或确认后的 apply）。
+**project-slot** / **fat snapshot** → [project-slot.md](project-slot.md) + SKILL 顶部正向规则。
 
 ```sql
 SELECT id, name, payload FROM profiles;
