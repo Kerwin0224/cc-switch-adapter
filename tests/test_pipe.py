@@ -253,5 +253,180 @@ class TestPipeRegisterDispatch(unittest.TestCase):
         self.assertTrue((dest / "SKILL.md").is_file())
 
 
+class TestPipeSlotOps(unittest.TestCase):
+    """slot subcommands: JSON-only, dry-run default, --apply writes."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.root = Path(self._td.name) / "home"
+        self.root.mkdir()
+        self.con = base_home(self.root)
+        add_skill(
+            self.con, id="local:a", name="a", directory="a", enabled_claude=1
+        )
+        add_skill(self.con, id="local:b", name="b", directory="b")
+        write_skill_md(self.root / ".agents" / "skills", "a")
+        write_skill_md(self.root / ".agents" / "skills", "b")
+        payload = {
+            "skills": {
+                "claude": ["local:a", "local:b", "local:ghost"],
+                "codex": ["local:b"],
+            }
+        }
+        self.con.execute(
+            "INSERT INTO profiles (id, name, payload, updated_at) VALUES (?,?,?,1)",
+            ("p1", "demo", json.dumps(payload)),
+        )
+        self.con.commit()
+        self.con.close()
+        self.db = self.root / ".cc-switch" / "cc-switch.db"
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _payload(self) -> dict:
+        con = sqlite3.connect(self.db)
+        p = json.loads(
+            con.execute(
+                "SELECT payload FROM profiles WHERE name='demo'"
+            ).fetchone()[0]
+        )
+        con.close()
+        return p
+
+    def test_slot_list_marks_dangling(self):
+        r = run_pipe(self.root, "slot", "list", "--profile", "demo")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("local:ghost  # dangling", r.stdout)
+        self.assertIn("claude: local:a", r.stdout)
+
+    def test_slot_scrub_dryrun_noop_then_apply(self):
+        r = run_pipe(self.root, "slot", "scrub", "--profile", "demo")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("[dry-run]", r.stdout)
+        self.assertIn("local:ghost", self._payload()["skills"]["claude"])
+
+        r = run_pipe(self.root, "slot", "scrub", "--profile", "demo", "--apply")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        skills = self._payload()["skills"]
+        self.assertEqual(skills["claude"], ["local:a", "local:b"])
+        self.assertEqual(skills["codex"], ["local:b"])
+
+    def test_slot_resnap_aligns_to_live(self):
+        # live claude = {local:a}; slot claude has a + b → resnap drops b
+        r = run_pipe(
+            self.root, "slot", "resnap", "--profile", "demo",
+            "--app", "claude", "--apply",
+        )
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self._payload()["skills"]["claude"], ["local:a"])
+
+    def test_slot_add_remove(self):
+        r = run_pipe(
+            self.root, "slot", "remove", "--profile", "demo",
+            "--app", "codex", "--id", "local:b", "--apply",
+        )
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self._payload()["skills"]["codex"], [])
+        r = run_pipe(
+            self.root, "slot", "add", "--profile", "demo",
+            "--app", "codex", "--id", "local:a", "--apply",
+        )
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self._payload()["skills"]["codex"], ["local:a"])
+        # non-canonical rejected
+        r = run_pipe(
+            self.root, "slot", "add", "--profile", "demo",
+            "--app", "codex", "--id", "bare", "--apply",
+        )
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+
+    def test_slot_never_touches_live(self):
+        run_pipe(self.root, "slot", "scrub", "--profile", "demo", "--apply")
+        run_pipe(self.root, "slot", "resnap", "--profile", "demo", "--app", "claude", "--apply")
+        con = sqlite3.connect(self.db)
+        a = con.execute(
+            "SELECT enabled_claude FROM skills WHERE id='local:a'"
+        ).fetchone()[0]
+        con.close()
+        self.assertEqual(a, 1)
+
+
+class TestPipeUninstall(unittest.TestCase):
+    """uninstall: dry-run default; full removal; orphan path."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.root = Path(self._td.name) / "home"
+        self.root.mkdir()
+        self.con = base_home(self.root)
+        add_skill(self.con, id="local:x", name="x", directory="x", enabled_claude=1)
+        write_skill_md(self.root / ".agents" / "skills", "x")
+        payload = {"skills": {"claude": ["local:x"]}}
+        self.con.execute(
+            "INSERT INTO profiles (id, name, payload, updated_at) VALUES (?,?,?,1)",
+            ("p1", "demo", json.dumps(payload)),
+        )
+        self.con.commit()
+        self.con.close()
+        self.db = self.root / ".cc-switch" / "cc-switch.db"
+        (self.root / ".claude" / "skills" / "x").symlink_to(
+            self.root / ".agents" / "skills" / "x"
+        )
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def test_uninstall_dryrun_noop(self):
+        r = run_pipe(self.root, "uninstall", "--id", "local:x")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("[dry-run]", r.stdout)
+        con = sqlite3.connect(self.db)
+        self.assertIsNotNone(
+            con.execute("SELECT 1 FROM skills WHERE id='local:x'").fetchone()
+        )
+        con.close()
+        self.assertTrue((self.root / ".agents" / "skills" / "x").is_dir())
+
+    def test_uninstall_apply_full_removal(self):
+        r = run_pipe(self.root, "uninstall", "--id", "local:x", "--apply")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        con = sqlite3.connect(self.db)
+        row = con.execute(
+            "SELECT count(*) FROM skills WHERE id='local:x'"
+        ).fetchone()[0]
+        self.assertEqual(row, 0)
+        p = json.loads(
+            con.execute(
+                "SELECT payload FROM profiles WHERE name='demo'"
+            ).fetchone()[0]
+        )
+        con.close()
+        self.assertNotIn("local:x", p["skills"]["claude"])
+        self.assertFalse((self.root / ".agents" / "skills" / "x").exists())
+        self.assertFalse(
+            (self.root / ".claude" / "skills" / "x").exists()
+        )
+
+    def test_uninstall_orphan_path_when_ssot_missing(self):
+        # simulate orphan: SSOT dir already gone (dangling projection remains)
+        import shutil
+        shutil.rmtree(self.root / ".agents" / "skills" / "x")
+        r = run_pipe(self.root, "uninstall", "--id", "local:x", "--apply")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("already missing", r.stdout)
+        con = sqlite3.connect(self.db)
+        row = con.execute(
+            "SELECT count(*) FROM skills WHERE id='local:x'"
+        ).fetchone()[0]
+        con.close()
+        self.assertEqual(row, 0)
+        # dangling projection removed
+        self.assertFalse(
+            (self.root / ".claude" / "skills" / "x").exists()
+            or (self.root / ".claude" / "skills" / "x").is_symlink()
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

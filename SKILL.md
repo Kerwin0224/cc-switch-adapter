@@ -73,13 +73,15 @@ set(slot) − set(live) 非空
 | 意图 | 动词 | 实现 |
 |------|------|------|
 | 体检 | **doctor** | `python3 "$SKILL_DIR/doctor.py"` → 报告 → **stop** |
+| 查→治闭环 | **remedy** | `python3 "$SKILL_DIR/remedy.py" [--apply]`（按 findings 分发：D9/D10/D13 自动修，其余给命令） |
 | 新装 / orphan 入库 | **register** | `pipe.py register`（默认 park；`--app` → install-enable） |
 | 开/关 app | **dispatch** | `pipe.py dispatch --enable\|--disable` |
-| 项目列表 / resnap | **slot** | [project-slot.md](project-slot.md) + [db-schema.md](db-schema.md) |
-| parent-link / bare id / 卸载 / hash | **migrate** | 见下；hash = [content_hash.py](content_hash.py) |
+| slot 治理 | **slot** | `pipe.py slot list\|scrub\|resnap\|add\|remove`（dry-run 默认，`--apply` 写） |
+| 卸载 / 孤儿清理 | **uninstall** | `pipe.py uninstall --id X [--keep-ssot] [--apply]` |
+| parent-link / bare id / hash | **migrate** | 见下；hash = [content_hash.py](content_hash.py) |
 
 `SKILL_DIR` = 本 skill 安装目录（已知路径；勿依赖 `$0`）。  
-可选：`--root <fake-home>`（doctor / pipe 均支持）。
+可选：`--root <fake-home>`（doctor / pipe / remedy 均支持）。
 
 字母 A–M 仅历史锚，**不要**当主路由。
 
@@ -90,7 +92,17 @@ python3 "$SKILL_DIR/doctor.py"          # 可选 --root / --full
 ```
 
 读 [doctor.md](doctor.md) 仅当需要检查目录。  
-**完成准则**：完整报告 + `next:`；仅 FATAL→exit≠0；零写入；fat 只指向正向规则。
+**完成准则**：完整报告 + `next:`；仅 FATAL→exit≠0；零写入；fat 只指向正向规则。  
+出现 `Skill 不存在 / toggle failed` 类警告 → 先 [experience.md](experience.md) 四查，再 `remedy`。
+
+### remedy
+
+```bash
+python3 "$SKILL_DIR/remedy.py"          # dry-run：打印 AUTO/CMD/SKIP 计划
+python3 "$SKILL_DIR/remedy.py" --apply  # 执行 auto（D9→enable、D10→disable、D13→scrub）
+```
+
+**完成准则**：auto 项 FIXED；D6/D7 等决策项只给命令不代执行；尾部 doctor recheck 对比前后。
 
 ### register（新装 ∪ orphan）
 
@@ -128,8 +140,29 @@ symlink | copy 跟 `skillSyncMethod`（[file-layout.md](file-layout.md)）。
 
 ### slot
 
-用户点名项目时：resnap / scrub / add-remove / apply。全文 [project-slot.md](project-slot.md)。  
-apply 前若 fat → 先确认或 resnap。
+用户点名项目时：`pipe.py slot list|scrub|resnap|add|remove`（默认 dry-run，`--apply` 才写 profiles JSON；**永不碰 live**）。  
+apply 前若 fat → 先确认或 resnap。全文 [project-slot.md](project-slot.md)。
+
+```bash
+python3 "$SKILL_DIR/pipe.py" slot list --profile '求职'           # 看引用，# dangling 标记
+python3 "$SKILL_DIR/pipe.py" slot scrub --profile '求职' --apply  # 去 DB 无行的引用
+python3 "$SKILL_DIR/pipe.py" slot resnap --profile '求职' --app claude --apply
+python3 "$SKILL_DIR/pipe.py" slot add|remove --profile X --app claude --id 'local:x' --apply
+```
+
+**完成准则**：resnap 后 `set(slot)==set(live)`；scrub 后无 dangling；live 未动。
+
+### uninstall（卸载 ∪ 孤儿清理）
+
+```bash
+python3 "$SKILL_DIR/pipe.py" uninstall --id 'local:x' [--keep-ssot] [--apply]
+```
+
+计划 = 删投影 → 删锁键 → 删 SSOT（`--keep-ssot` 保留）→ 删行 → **scrub 全 profile slot 引用**。  
+SSOT 目录已缺失（孤儿残留）→ 自动走残留清理路径，只清行/断链投影/slot 引用。  
+**硬护栏**：SSOT 删除必须走本命令，禁止手删 SSOT 目录（见 [experience.md](experience.md) 复盘）。
+
+**完成准则**：行不在；无投影/断链；无 slot 引用；SSOT 不在或保留；锁键不在。
 
 ### migrate
 
@@ -137,16 +170,15 @@ apply 前若 fat → 先确认或 resnap。
 |--------|------|
 | parent-link | `rm` 父链 → `mkdir` → 对 enable=1 建 child-link |
 | bare id | 新 canonical INSERT（拷 enable）→ DELETE 旧；scrub slot；[db-schema.md](db-schema.md) |
-| 卸载 | 删投影+行+SSOT+锁键；**scrub 全 slot**（adapter-policy；官方不 scrub） |
 | hash / 误报 | `python3 "$SKILL_DIR/content_hash.py" "$SSOT/<dir>"` → `UPDATE content_hash` |
 
-**完成准则**：无 bare/parent-link；enable 不丢；卸载后 SSOT 与行不在；hash=现场。  
+**完成准则**：无 bare/parent-link；enable 不丢；hash=现场。  
 硬护栏：不用 `clear_skills` 当常规迁移；不整表 park。
 
 ---
 
 ## 参考
 
-- [pipe.py](pipe.py) · [doctor.py](doctor.py) · [content_hash.py](content_hash.py)  
-- [doctor.md](doctor.md) · [project-slot.md](project-slot.md) · [db-schema.md](db-schema.md)  
-- [file-layout.md](file-layout.md) · [lock-file.md](lock-file.md)  
+- [pipe.py](pipe.py) · [doctor.py](doctor.py) · [remedy.py](remedy.py) · [content_hash.py](content_hash.py)  
+- [experience.md](experience.md) · [project-slot.md](project-slot.md) · [db-schema.md](db-schema.md)  
+- [doctor.md](doctor.md) · [file-layout.md](file-layout.md) · [lock-file.md](lock-file.md)  

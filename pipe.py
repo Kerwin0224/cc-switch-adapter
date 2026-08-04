@@ -391,6 +391,307 @@ def dispatch(home: Path, *, skill_id: str, app: str, enabled: bool) -> None:
     # profiles intentionally untouched
 
 
+# ---------- profiles / project-slot ----------
+
+def load_profiles(con: sqlite3.Connection) -> list[dict]:
+    """All profiles as {id, name, payload|None}; bad JSON → payload None."""
+    try:
+        rows = con.execute("SELECT id, name, payload FROM profiles").fetchall()
+    except sqlite3.OperationalError:
+        return []
+    out = []
+    for r in rows:
+        try:
+            payload = json.loads(r["payload"] or "{}")
+        except Exception:
+            payload = None
+        out.append({"id": r["id"], "name": r["name"], "payload": payload})
+    return out
+
+
+def get_profile(con: sqlite3.Connection, name: str) -> dict | None:
+    for p in load_profiles(con):
+        if p["name"] == name:
+            return p
+    return None
+
+
+def save_profile_payload(con: sqlite3.Connection, name: str, payload: dict) -> None:
+    con.execute(
+        "UPDATE profiles SET payload=?, updated_at=? WHERE name=?",
+        (json.dumps(payload, ensure_ascii=False), int(time.time()), name),
+    )
+    con.commit()
+
+
+def profile_skills(payload, app: str) -> list | None:
+    """skills.<app> array, or None when unset / null / malformed."""
+    if not isinstance(payload, dict):
+        return None
+    skills = payload.get("skills")
+    if not isinstance(skills, dict):
+        return None
+    arr = skills.get(app)
+    return arr if isinstance(arr, list) else None
+
+
+def slot_list(
+    home: Path, *, profile: str | None = None, app: str | None = None
+) -> None:
+    con = open_db(home)
+    ids = {r["id"] for r in con.execute("SELECT id FROM skills")}
+    for p in load_profiles(con):
+        if profile and p["name"] != profile:
+            continue
+        print(f"profile={p['name']!r}")
+        if p["payload"] is None:
+            print("  (bad JSON)")
+            continue
+        for a in sorted((p["payload"].get("skills") or {}).keys()):
+            if app and a != app:
+                continue
+            arr = profile_skills(p["payload"], a)
+            if arr is None:
+                print(f"  {a}: (unset)")
+                continue
+            for sid in arr:
+                flag = "" if sid in ids else "  # dangling"
+                print(f"  {a}: {sid}{flag}")
+    con.close()
+
+
+def slot_scrub(
+    home: Path, *, profile: str, app: str | None = None, apply: bool = False
+) -> None:
+    """Drop refs to ids that no DB row exists for (D13 remedy). JSON only."""
+    con = open_db(home)
+    ids = {r["id"] for r in con.execute("SELECT id FROM skills")}
+    p = get_profile(con, profile)
+    if p is None:
+        con.close()
+        raise PipeError(f"profile not found: {profile}")
+    payload = p["payload"]
+    if not isinstance(payload, dict):
+        con.close()
+        raise PipeError(f"profile {profile!r} bad JSON")
+    skills = payload.setdefault("skills", {})
+    apps = [app] if app else [a for a in skills if isinstance(skills[a], list)]
+    removed = 0
+    for a in apps:
+        arr = skills.get(a)
+        if not isinstance(arr, list):
+            continue
+        drop = [s for s in arr if s not in ids]
+        if drop:
+            for s in drop:
+                print(f"  - {a}: {s}  # dangling")
+            skills[a] = [s for s in arr if s not in drop]
+            removed += len(drop)
+    con.close()
+    if not removed:
+        print(f"profile={profile!r}: nothing to scrub")
+        return
+    if not apply:
+        print(
+            f"[dry-run] would scrub {removed} dangling ref(s) from "
+            f"profile={profile!r} (--apply to write)"
+        )
+        return
+    con = open_db(home)
+    save_profile_payload(con, profile, payload)
+    con.close()
+    print(f"scrubbed {removed} dangling ref(s) from profile={profile!r}")
+
+
+def slot_resnap(
+    home: Path, *, profile: str, app: str, apply: bool = False
+) -> None:
+    """slot.<app> = live ids (enabled_*=1). JSON only; live untouched."""
+    if app not in EN_COL:
+        raise PipeError(f"unknown app: {app}")
+    con = open_db(home)
+    col = EN_COL[app]
+    live = sorted(
+        r["id"]
+        for r in con.execute(f"SELECT id FROM skills WHERE {col}=1")
+    )
+    p = get_profile(con, profile)
+    if p is None:
+        con.close()
+        raise PipeError(f"profile not found: {profile}")
+    payload = p["payload"]
+    if not isinstance(payload, dict):
+        con.close()
+        raise PipeError(f"profile {profile!r} bad JSON")
+    old = profile_skills(payload, app) or []
+    added = [s for s in live if s not in old]
+    dropped = [s for s in old if s not in live]
+    if not added and not dropped:
+        con.close()
+        print(f"profile={profile!r} app={app}: already aligned ({len(old)})")
+        return
+    if not apply:
+        for s in added:
+            print(f"  + {app}: {s}")
+        for s in dropped:
+            print(f"  - {app}: {s}")
+        print(
+            f"[dry-run] would resnap profile={profile!r} app={app} "
+            f"{len(old)}→{len(live)} (--apply to write)"
+        )
+        con.close()
+        return
+    skills = payload.setdefault("skills", {})
+    skills[app] = live
+    save_profile_payload(con, profile, payload)
+    con.close()
+    print(f"resnapped profile={profile!r} app={app}: {len(old)}→{len(live)}")
+
+
+def _slot_touch(
+    home: Path,
+    *,
+    profile: str,
+    app: str,
+    skill_id: str,
+    add: bool,
+    apply: bool,
+) -> None:
+    if not is_canonical(skill_id):
+        raise PipeError(f"non-canonical id: {skill_id!r}")
+    con = open_db(home)
+    known = get_skill(con, skill_id) is not None
+    p = get_profile(con, profile)
+    if p is None:
+        con.close()
+        raise PipeError(f"profile not found: {profile}")
+    payload = p["payload"]
+    if not isinstance(payload, dict):
+        con.close()
+        raise PipeError(f"profile {profile!r} bad JSON")
+    skills = payload.setdefault("skills", {})
+    arr = skills.get(app)
+    if arr is None:
+        arr = []
+        skills[app] = arr
+    if not isinstance(arr, list):
+        con.close()
+        raise PipeError(f"profile={profile!r} skills.{app} not list")
+    if add:
+        if skill_id in arr:
+            con.close()
+            print(f"already present: {skill_id}")
+            return
+        if not known:
+            print(f"warn: {skill_id} has no DB row yet (register later)")
+        if not apply:
+            print(f"[dry-run] would add {app}: {skill_id} (--apply to write)")
+            con.close()
+            return
+        arr.append(skill_id)
+    else:
+        if skill_id not in arr:
+            con.close()
+            print(f"not present: {skill_id}")
+            return
+        if not apply:
+            print(f"[dry-run] would remove {app}: {skill_id} (--apply to write)")
+            con.close()
+            return
+        arr.remove(skill_id)
+    save_profile_payload(con, profile, payload)
+    con.close()
+    verb = "added" if add else "removed"
+    print(f"{verb} {app}: {skill_id} on profile={profile!r}")
+
+
+# ---------- uninstall / orphan cleanup ----------
+
+def uninstall(
+    home: Path, *, skill_id: str, keep_ssot: bool = False, apply: bool = False
+) -> None:
+    """Full uninstall; falls back to orphan cleanup when SSOT already gone.
+
+    Plan: projections → lock key → SSOT dir → DB row → scrub all slot refs.
+    """
+    precheck_all_apps(home)
+    settings = load_settings(home)
+    ssot = ssot_path(home, settings)
+    method = sync_method(settings)
+    con = open_db(home)
+    row = get_skill(con, skill_id)
+    if row is None:
+        con.close()
+        raise PipeError(f"skill not found: {skill_id} (nothing to uninstall)")
+    directory = row["directory"]
+    leaf = ssot / directory
+    plan: list[str] = []
+    lock_hit = False
+    lock_data: dict = {}
+    lp = lock_path(home)
+    if lp.is_file():
+        try:
+            lock_data = json.loads(lp.read_text())
+            lock_hit = directory in (lock_data.get("skills") or {})
+        except Exception:
+            pass
+    for app in EN_COL:
+        dest = app_skills_dir(home, app) / directory
+        if dest.exists() or dest.is_symlink():
+            plan.append(f"remove projection {dest}")
+    if lock_hit:
+        plan.append(f"remove lock key {directory!r}")
+    orphan = not leaf.exists()
+    if leaf.exists():
+        plan.append(f"remove SSOT {leaf}" if not keep_ssot else f"keep SSOT {leaf}")
+    else:
+        plan.append(f"SSOT {leaf} already missing — orphan path (row/projections/slot only)")
+    dirty_profiles = []
+    for p in load_profiles(con):
+        for a, arr in ((p["payload"] or {}).get("skills") or {}).items():
+            if isinstance(arr, list) and skill_id in arr:
+                dirty_profiles.append(p["name"])
+                break
+    for name in dirty_profiles:
+        plan.append(f"scrub profile={name!r} ref {skill_id}")
+    if not apply:
+        print("[dry-run] uninstall plan:")
+        for l in plan:
+            print("  " + l)
+        con.close()
+        return
+    if orphan:
+        print(
+            f"SSOT {leaf} already missing — orphan path "
+            f"(row/projections/slot only)"
+        )
+    for app in EN_COL:
+        dest = app_skills_dir(home, app) / directory
+        if dest.exists() or dest.is_symlink():
+            remove_projection(dest, leaf, method)
+    if lock_hit:
+        lock_data.get("skills", {}).pop(directory, None)
+        lp.write_text(json.dumps(lock_data, indent=2) + "\n")
+    if leaf.exists() and not keep_ssot:
+        shutil.rmtree(leaf)
+    for name in dirty_profiles:
+        p = get_profile(con, name)
+        if p is None or not isinstance(p["payload"], dict):
+            continue
+        skills = p["payload"].get("skills")
+        if not isinstance(skills, dict):
+            continue
+        for a, arr in skills.items():
+            if isinstance(arr, list) and skill_id in arr:
+                skills[a] = [s for s in arr if s != skill_id]
+        save_profile_payload(con, name, p["payload"])
+        print(f"scrubbed profile={name!r}")
+    con.execute("DELETE FROM skills WHERE id=?", (skill_id,))
+    con.commit()
+    con.close()
+    print(f"uninstalled {skill_id} (directory={directory})")
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="pipe.py", description="closed-pipe register/dispatch")
     p.add_argument(
@@ -418,6 +719,35 @@ def main(argv: list[str] | None = None) -> int:
     g = pd.add_mutually_exclusive_group(required=True)
     g.add_argument("--enable", action="store_true")
     g.add_argument("--disable", action="store_true")
+
+    ps = sub.add_parser("slot", help="project-slot JSON ops (profiles only, never live)")
+    ssub = ps.add_subparsers(dest="slot_cmd", required=True)
+    psl = ssub.add_parser("list", help="show profile skill refs, mark dangling")
+    psl.add_argument("--profile", default=None)
+    psl.add_argument("--app", default=None)
+    psc = ssub.add_parser("scrub", help="drop refs with no DB row (D13)")
+    psc.add_argument("--profile", required=True)
+    psc.add_argument("--app", default=None)
+    psc.add_argument("--apply", action="store_true")
+    psr = ssub.add_parser("resnap", help="slot = live (enabled_*=1), JSON only")
+    psr.add_argument("--profile", required=True)
+    psr.add_argument("--app", required=True)
+    psr.add_argument("--apply", action="store_true")
+    psa = ssub.add_parser("add", help="append a canonical ref")
+    psa.add_argument("--profile", required=True)
+    psa.add_argument("--app", required=True)
+    psa.add_argument("--id", required=True)
+    psa.add_argument("--apply", action="store_true")
+    psd = ssub.add_parser("remove", help="remove a ref")
+    psd.add_argument("--profile", required=True)
+    psd.add_argument("--app", required=True)
+    psd.add_argument("--id", required=True)
+    psd.add_argument("--apply", action="store_true")
+
+    pu = sub.add_parser("uninstall", help="remove skill + projections + lock + slot refs")
+    pu.add_argument("--id", required=True)
+    pu.add_argument("--keep-ssot", action="store_true")
+    pu.add_argument("--apply", action="store_true")
 
     args = p.parse_args(argv)
     home = (args.root or Path.home()).expanduser().resolve()
@@ -448,7 +778,46 @@ def main(argv: list[str] | None = None) -> int:
                 f"dispatch ok id={args.id} app={args.app} "
                 f"enabled={bool(args.enable)}"
             )
-        return 0
+        elif args.cmd == "slot":
+            if args.slot_cmd == "list":
+                slot_list(home, profile=args.profile, app=args.app)
+            elif args.slot_cmd == "scrub":
+                slot_scrub(
+                    home,
+                    profile=args.profile,
+                    app=args.app,
+                    apply=args.apply,
+                )
+            elif args.slot_cmd == "resnap":
+                slot_resnap(
+                    home, profile=args.profile, app=args.app, apply=args.apply
+                )
+            elif args.slot_cmd == "add":
+                _slot_touch(
+                    home,
+                    profile=args.profile,
+                    app=args.app,
+                    skill_id=args.id,
+                    add=True,
+                    apply=args.apply,
+                )
+            elif args.slot_cmd == "remove":
+                _slot_touch(
+                    home,
+                    profile=args.profile,
+                    app=args.app,
+                    skill_id=args.id,
+                    add=False,
+                    apply=args.apply,
+                )
+        elif args.cmd == "uninstall":
+            uninstall(
+                home,
+                skill_id=args.id,
+                keep_ssot=args.keep_ssot,
+                apply=args.apply,
+            )
+            return 0
     except PipeError as e:
         print(f"error: {e}", file=sys.stderr)
         return e.code
