@@ -31,28 +31,17 @@ override 与缺列以本机为准。claude-desktop / openclaw：无 skill 分发
 - 指向本 skill SSOT 叶的 **symlink**，或  
 - **含 `SKILL.md` 的目录**（copy 投影）
 
-**禁止**对不透明目录执行 `rm -r`（无 `SKILL.md`、非我们的链接）。遇不透明路径 → 失败并报告，由用户决定。
+**禁止**对不透明目录执行递归删除（无 `SKILL.md`、非我们的链接）。遇不透明路径 → 失败并报告，由用户决定。
 
 ```bash
-# $APP=app skills 真目录；$name=directory；$SSOT 已解析
-[ -d "$APP" ] || mkdir -p "$APP"
-[ -L "$APP" ] && echo "FATAL parent-link" && exit 1
-# 仅当是我们的投影时才删（symlink→SSOT 或 含 SKILL.md 的目录）
-if [ -L "$APP/$name" ]; then
-  rm "$APP/$name"
-elif [ -d "$APP/$name" ] && [ -f "$APP/$name/SKILL.md" ]; then
-  rm -r "$APP/$name"
-elif [ -e "$APP/$name" ]; then
-  echo "FAIL opaque path, refuse rm: $APP/$name"; exit 1
-fi
-ln -s "$SSOT/$name" "$APP/$name"   # 或 copy 树 + rename
-[ -e "$APP/$name" ] || exit 1
+python3 "$SKILL_DIR/pipe.py" dispatch --id "$ID" --app "$APP_NAME" --enable
 ```
 
 `copy`：`cp -R` 到临时名再 `mv`；失败不吞。  
 `auto`：symlink 失败则 copy（与官方一致）。
 
-**parent-link**：`app/skills` → SSOT 整链时，删子项可能毁 SSOT。修复：`rm` 父链 → `mkdir` → 对 enable=1 建 child-link。
+**parent-link**：`app/skills` → SSOT 整链时，删子项可能毁 SSOT。修复只走
+`pipe.py migrate`；它会先阻止危险操作，再把父目录迁回真实目录并重建启用项。
 
 ## 状态对照
 

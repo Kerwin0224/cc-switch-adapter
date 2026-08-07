@@ -32,12 +32,12 @@ set(slot) − set(live) 非空
 
 - slot 有、live 无 → fat → resnap/scrub 或报告；**不**自动 enable  
 - live 有、slot 无 → live 更新；非用户要求不强制关  
-- 用户说「这项目没启用 X」→ 信用户 + live；X 在 slot → 脏 slot  
+- 用户说「这项目没启用 X」→ 信用户 + live；X 在 slot → 脏 slot，不能自动打开 X
 
 ## 子操作（仅用户点名项目时）
 
 1. **resnap**：`slot.<app> = SELECT id … WHERE enabled_*=1`——只改 JSON  
-2. **scrub**：去掉表中不存在的 id；bare→canonical（常随 **migrate**）  
+2. **scrub**：显式去掉表中不存在的 id；bare→canonical（常随 **migrate**）  
 3. **add/remove id**：改数组；默认不 apply  
 4. **apply**：用户明确「按某项目套到 live」——会改 enable；slot 仍胖会打开差集 → 先确认或先 resnap  
 

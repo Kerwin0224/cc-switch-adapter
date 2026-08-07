@@ -20,9 +20,17 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
 # single hash SSOT (shared with pipe/reconcile)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from content_hash import dir_hash  # noqa: E402
+from adapter_contract import (
+    APP_DIRS_REL,
+    app_skill_dirs,
+    is_canonical_id,
+    is_safe_directory,
+)  # noqa: E402
 
 # --- category matrix (map: Freeze residual seam decisions) ---
 # design | hygiene | policy; minor overrides OK if spirit holds
@@ -41,7 +49,7 @@ CODE_CATEGORY: dict[str, str] = {
     "D10.park-leak": "policy",
     "D11.dup-directory": "design",
     "D12.lock": "hygiene",
-    "D13.slot-dangling": "design",
+    "D13.slot-dangling": "policy",
     "D14.slot-id": "design",
     "D15.fat-snapshot": "policy",
     "D16.binding": "policy",
@@ -63,14 +71,6 @@ CODE_VERB: dict[str, str] = {
 
 LEVEL_ORDER = {"FATAL": 0, "ERROR": 1, "WARN": 2, "INFO": 3, "OK": 4}
 
-APP_DIRS_REL = {
-    "claude": (".claude", "skills"),
-    "codex": (".codex", "skills"),
-    "gemini": (".gemini", "skills"),
-    "grokbuild": (".grok", "skills"),
-    "opencode": (".config", "opencode", "skills"),
-    "hermes": (".hermes", "skills"),
-}
 EN_COL = {
     "claude": "enabled_claude",
     "codex": "enabled_codex",
@@ -82,19 +82,7 @@ EN_COL = {
 SLOT_APPS = ("claude", "codex")
 
 
-def is_canonical(i: str) -> bool:
-    """owner/repo:<path> | local:<name>. Illegal: bare; empty / . / .. suffix."""
-    if i.startswith("local:"):
-        rest = i[6:]
-        return bool(rest) and rest not in (".", "..") and not rest.startswith("/")
-    if ":" not in i:
-        return False
-    left, right = i.split(":", 1)
-    if left.count("/") < 1:
-        return False
-    if not right or right in (".", "..") or right.startswith("/"):
-        return False
-    return True
+is_canonical = is_canonical_id
 
 
 def category_for(code: str) -> str:
@@ -223,6 +211,7 @@ class Doctor:
             return
         self.loc = cfg.get("skillStorageLocation", "cc_switch")
         self.sync = cfg.get("skillSyncMethod", "auto")
+        self.app_dirs = app_skill_dirs(self.home, cfg)
         self.ssot = (
             self.home / ".agents" / "skills"
             if self.loc == "unified"
@@ -315,13 +304,7 @@ class Doctor:
                     "D4.canonical-id",
                     f"id={sid!r} → migrate",
                 )
-            if (
-                not directory
-                or directory in (".", "..")
-                or directory.startswith("/")
-                or directory.startswith("~")
-                or "/" in str(directory)
-            ):
+            if not is_safe_directory(str(directory)):
                 self.add(
                     "ERROR",
                     "D4.directory",
@@ -530,7 +513,7 @@ class Doctor:
                 for sid in slot:
                     if sid not in ids:
                         self.add(
-                            "ERROR",
+                            "WARN",
                             "D13.slot-dangling",
                             f"profile={row['name']!r} app={app} id={sid!r} → slot",
                         )

@@ -6,11 +6,11 @@ doctor 只读（查）；remedy 按 findings 分发修复（治）：
   auto-fix（安全、可逆、语义明确）:
     D9.live-link      → dispatch --enable    （enable 但投影缺失）
     D10.park-leak     → dispatch --disable   （disable 但 SSOT-link 残留）
-    D13.slot-dangling → slot scrub           （slot 引用无 DB 行）
 
   suggest（用户决策 / 有歧义，只打印命令）:
     D6.ssot-db      → uninstall（清残留） 或 register（重建）
     D7.db-ssot-orphan → register
+    D13.slot-dangling → slot scrub（显式项目决策）
     D14.slot-id     → slot remove（非 canonical 引用）
     D4/D11/D3/D0/D1 → migrate
     D15.fat-snapshot → slot resnap（需用户点名项目）
@@ -27,6 +27,8 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.dont_write_bytecode = True
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import doctor as doclib  # noqa: E402
@@ -100,14 +102,13 @@ def plan_findings(findings: list, ssot: Path) -> list[dict]:
             if m:
                 plan.append(
                     {
-                        "kind": "auto",
+                        "kind": "cmd",
                         "code": code,
                         "msg": msg,
-                        "fn": lambda prof=m.group(1): pipe.slot_scrub(
-                            home=_HOME, profile=prof, apply=True
+                        "cmd": (
+                            f"python3 {Path(pipe.__file__).name} slot scrub "
+                            f"--profile {m.group(1)!r} --app {m.group(2)} --apply"
                         ),
-                        "desc": f"slot scrub profile={m.group(1)!r} "
-                        f"app={m.group(2)!r} id={m.group(3)!r}",
                     }
                 )
             continue

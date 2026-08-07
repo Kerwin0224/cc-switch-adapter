@@ -402,7 +402,7 @@ class TestPipeUninstall(unittest.TestCase):
             ).fetchone()[0]
         )
         con.close()
-        self.assertNotIn("local:x", p["skills"]["claude"])
+        self.assertIn("local:x", p["skills"]["claude"])
         self.assertFalse((self.root / ".agents" / "skills" / "x").exists())
         self.assertFalse(
             (self.root / ".claude" / "skills" / "x").exists()

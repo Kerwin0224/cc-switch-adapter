@@ -24,18 +24,21 @@ import sys
 import time
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
 # local import: same package root
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from content_hash import dir_hash  # noqa: E402
+from adapter_contract import (  # noqa: E402
+    APP_DIRS_REL,
+    MigrationRequest,
+    PROFILE_SKILL_APPS,
+    app_skills_dir as resolve_app_skills_dir,
+    parse_skill_metadata,
+    is_canonical_id,
+    is_safe_directory,
+)
 
-APP_DIRS_REL = {
-    "claude": (".claude", "skills"),
-    "codex": (".codex", "skills"),
-    "gemini": (".gemini", "skills"),
-    "grokbuild": (".grok", "skills"),
-    "opencode": (".config", "opencode", "skills"),
-    "hermes": (".hermes", "skills"),
-}
 EN_COL = {
     "claude": "enabled_claude",
     "codex": "enabled_codex",
@@ -75,9 +78,10 @@ def sync_method(settings: dict) -> str:
 
 
 def app_skills_dir(home: Path, app: str) -> Path:
-    if app not in APP_DIRS_REL:
-        raise PipeError(f"unknown app: {app}")
-    return home.joinpath(*APP_DIRS_REL[app])
+    try:
+        return resolve_app_skills_dir(home, load_settings(home), app)
+    except KeyError as exc:
+        raise PipeError(str(exc)) from exc
 
 
 def db_path(home: Path) -> Path:
@@ -88,18 +92,7 @@ def lock_path(home: Path) -> Path:
     return home / ".agents" / ".skill-lock.json"
 
 
-def is_canonical(i: str) -> bool:
-    if i.startswith("local:"):
-        rest = i[6:]
-        return bool(rest) and rest not in (".", "..") and not rest.startswith("/")
-    if ":" not in i:
-        return False
-    left, right = i.split(":", 1)
-    if left.count("/") < 1:
-        return False
-    if not right or right in (".", "..") or right.startswith("/"):
-        return False
-    return True
+is_canonical = is_canonical_id
 
 
 def assert_parent_not_link(app_dir: Path) -> None:
@@ -203,6 +196,7 @@ def write_lock_github(
     repo: str,
     skill_path: str = "",
     branch: str = "main",
+    folder_hash: str = "",
 ) -> None:
     lp = lock_path(home)
     lp.parent.mkdir(parents=True, exist_ok=True)
@@ -212,16 +206,30 @@ def write_lock_github(
         data = {"version": 3, "skills": {}, "dismissed": {}}
     data.setdefault("skills", {})
     now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    previous = data["skills"].get(directory) or {}
     data["skills"][directory] = {
         "source": f"{owner}/{repo}",
         "sourceType": "github",
         "sourceUrl": f"https://github.com/{owner}/{repo}.git",
         "skillPath": skill_path or f"{directory}/SKILL.md",
         "branch": branch,
-        "skillFolderHash": "",
-        "installedAt": now,
+        "skillFolderHash": folder_hash,
+        "installedAt": previous.get("installedAt", now),
         "updatedAt": now,
     }
+    lp.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def refresh_lock_local(home: Path, directory: str, folder_hash: str) -> None:
+    lp = lock_path(home)
+    if not lp.is_file():
+        return
+    data = json.loads(lp.read_text())
+    entry = (data.get("skills") or {}).get(directory)
+    if not isinstance(entry, dict) or entry.get("sourceType") != "local":
+        return
+    entry["skillFolderHash"] = folder_hash or ""
+    entry["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
     lp.write_text(json.dumps(data, indent=2) + "\n")
 
 
@@ -271,26 +279,49 @@ def register(
 ) -> None:
     if not is_canonical(skill_id):
         raise PipeError(f"non-canonical id: {skill_id!r}")
-    if "/" in directory or directory in (".", "..") or not directory:
+    if ":" in skill_id and not skill_id.startswith("local:"):
+        expected_owner, expected_repo = skill_id.split(":", 1)[0].split("/", 1)
+        if repo_owner and repo_owner != expected_owner:
+            raise PipeError("repo owner does not match canonical id")
+        if repo_name and repo_name != expected_repo:
+            raise PipeError("repo name does not match canonical id")
+    if not is_safe_directory(directory):
         raise PipeError(f"directory must be single path segment: {directory!r}")
     precheck_all_apps(home)
     settings = load_settings(home)
     ssot = ssot_path(home, settings)
     ssot.mkdir(parents=True, exist_ok=True)
     method = sync_method(settings)
-    display = name or directory
-    leaf = ensure_ssot_leaf(ssot, directory, source_dir, display)
-    h = dir_hash(leaf)
-    now = int(time.time())
     con = open_db(home)
     cols = skill_columns(con)
     existing = get_skill(con, skill_id)
+    directory_owner = con.execute(
+        "SELECT id FROM skills WHERE directory=? AND id<>?",
+        (directory, skill_id),
+    ).fetchone()
+    if directory_owner:
+        con.close()
+        raise PipeError(
+            f"directory already belongs to another skill: {directory!r}; use migrate"
+        )
+    if existing and "directory" in cols and existing["directory"] != directory:
+        con.close()
+        raise PipeError(
+            "register cannot rename an existing skill; use migrate to preserve projections"
+        )
+    leaf = ensure_ssot_leaf(ssot, directory, source_dir, name or directory)
+    metadata = parse_skill_metadata(leaf / "SKILL.md", directory)
+    display = name or metadata.name
+    description = metadata.description
+    h = dir_hash(leaf)
+    now = int(time.time())
     if existing:
         # preserve enables; update metadata only
         sets = ["name=?", "updated_at=?"]
         vals: list = [display, now]
         if "description" in cols:
-            pass
+            sets.append("description=?")
+            vals.append(description)
         if repo_owner and "repo_owner" in cols:
             sets.append("repo_owner=?")
             vals.append(repo_owner)
@@ -309,7 +340,7 @@ def register(
         values: list = [skill_id, display, directory]
         if "description" in cols:
             fields.append("description")
-            values.append("")
+            values.append(description)
         if "repo_owner" in cols:
             fields.append("repo_owner")
             values.append(repo_owner)
@@ -343,10 +374,21 @@ def register(
     if repo_owner and repo_name:
         try:
             write_lock_github(
-                home, directory, repo_owner, repo_name, skill_path, repo_branch
+                home,
+                directory,
+                repo_owner,
+                repo_name,
+                skill_path,
+                repo_branch,
+                h or "",
             )
         except OSError as e:
             print(f"warn: lock write failed: {e}", file=sys.stderr)
+    else:
+        try:
+            refresh_lock_local(home, directory, h or "")
+        except (OSError, ValueError, json.JSONDecodeError) as e:
+            print(f"warn: local lock refresh failed: {e}", file=sys.stderr)
 
     # never touch project-slot on register
     if app:
@@ -464,6 +506,8 @@ def slot_scrub(
     home: Path, *, profile: str, app: str | None = None, apply: bool = False
 ) -> None:
     """Drop refs to ids that no DB row exists for (D13 remedy). JSON only."""
+    if app is not None and app not in PROFILE_SKILL_APPS:
+        raise PipeError(f"app has no cc-switch profile skill scope: {app}")
     con = open_db(home)
     ids = {r["id"] for r in con.execute("SELECT id FROM skills")}
     p = get_profile(con, profile)
@@ -475,7 +519,7 @@ def slot_scrub(
         con.close()
         raise PipeError(f"profile {profile!r} bad JSON")
     skills = payload.setdefault("skills", {})
-    apps = [app] if app else [a for a in skills if isinstance(skills[a], list)]
+    apps = [app] if app else [a for a in PROFILE_SKILL_APPS if isinstance(skills.get(a), list)]
     removed = 0
     for a in apps:
         arr = skills.get(a)
@@ -507,8 +551,8 @@ def slot_resnap(
     home: Path, *, profile: str, app: str, apply: bool = False
 ) -> None:
     """slot.<app> = live ids (enabled_*=1). JSON only; live untouched."""
-    if app not in EN_COL:
-        raise PipeError(f"unknown app: {app}")
+    if app not in PROFILE_SKILL_APPS:
+        raise PipeError(f"app has no cc-switch profile skill scope: {app}")
     con = open_db(home)
     col = EN_COL[app]
     live = sorted(
@@ -559,6 +603,8 @@ def _slot_touch(
 ) -> None:
     if not is_canonical(skill_id):
         raise PipeError(f"non-canonical id: {skill_id!r}")
+    if app not in PROFILE_SKILL_APPS:
+        raise PipeError(f"app has no cc-switch profile skill scope: {app}")
     con = open_db(home)
     known = get_skill(con, skill_id) is not None
     p = get_profile(con, profile)
@@ -612,7 +658,7 @@ def uninstall(
 ) -> None:
     """Full uninstall; falls back to orphan cleanup when SSOT already gone.
 
-    Plan: projections → lock key → SSOT dir → DB row → scrub all slot refs.
+    Plan: projections → lock key → SSOT dir → DB row. Profile snapshots remain intact.
     """
     precheck_all_apps(home)
     settings = load_settings(home)
@@ -646,14 +692,6 @@ def uninstall(
         plan.append(f"remove SSOT {leaf}" if not keep_ssot else f"keep SSOT {leaf}")
     else:
         plan.append(f"SSOT {leaf} already missing — orphan path (row/projections/slot only)")
-    dirty_profiles = []
-    for p in load_profiles(con):
-        for a, arr in ((p["payload"] or {}).get("skills") or {}).items():
-            if isinstance(arr, list) and skill_id in arr:
-                dirty_profiles.append(p["name"])
-                break
-    for name in dirty_profiles:
-        plan.append(f"scrub profile={name!r} ref {skill_id}")
     if not apply:
         print("[dry-run] uninstall plan:")
         for l in plan:
@@ -674,22 +712,165 @@ def uninstall(
         lp.write_text(json.dumps(lock_data, indent=2) + "\n")
     if leaf.exists() and not keep_ssot:
         shutil.rmtree(leaf)
-    for name in dirty_profiles:
-        p = get_profile(con, name)
-        if p is None or not isinstance(p["payload"], dict):
-            continue
-        skills = p["payload"].get("skills")
-        if not isinstance(skills, dict):
-            continue
-        for a, arr in skills.items():
-            if isinstance(arr, list) and skill_id in arr:
-                skills[a] = [s for s in arr if s != skill_id]
-        save_profile_payload(con, name, p["payload"])
-        print(f"scrubbed profile={name!r}")
     con.execute("DELETE FROM skills WHERE id=?", (skill_id,))
     con.commit()
     con.close()
     print(f"uninstalled {skill_id} (directory={directory})")
+
+
+def migrate(home: Path, request: MigrationRequest) -> None:
+    if not is_canonical(request.target_id):
+        raise PipeError(f"non-canonical target id: {request.target_id!r}")
+    if not is_safe_directory(request.directory):
+        raise PipeError(f"directory must be single path segment: {request.directory!r}")
+    precheck_all_apps(home)
+    settings = load_settings(home)
+    ssot = ssot_path(home, settings)
+    method = sync_method(settings)
+    con = open_db(home)
+    row = get_skill(con, request.source_id)
+    if row is None:
+        con.close()
+        raise PipeError(f"skill not found: {request.source_id}")
+    conflict = get_skill(con, request.target_id)
+    if conflict is not None and request.target_id != request.source_id:
+        con.close()
+        raise PipeError(f"target id already exists: {request.target_id}")
+    directory_conflict = con.execute(
+        "SELECT id FROM skills WHERE directory=? AND id<>?",
+        (request.directory, request.source_id),
+    ).fetchone()
+    if directory_conflict:
+        con.close()
+        raise PipeError(f"target directory already belongs to another skill: {request.directory!r}")
+
+    source_directory = row["directory"]
+    source_leaf = ssot / source_directory
+    target_leaf = ssot / request.directory
+    if source_directory != request.directory:
+        if source_leaf.exists() and target_leaf.exists():
+            con.close()
+            raise PipeError(f"both source and target SSOT directories exist: {source_leaf}, {target_leaf}")
+        if not source_leaf.exists() and not target_leaf.exists():
+            con.close()
+            raise PipeError(f"neither source nor target SSOT directory exists: {source_leaf}, {target_leaf}")
+    elif not source_leaf.exists():
+        con.close()
+        raise PipeError(f"SSOT directory missing: {source_leaf}")
+
+    projection_moves: list[tuple[str, Path]] = []
+    for app in EN_COL:
+        source_projection = app_skills_dir(home, app) / source_directory
+        if source_projection.exists() or source_projection.is_symlink():
+            if not is_our_projection(source_projection, source_leaf, method):
+                con.close()
+                raise PipeError(f"refusing to migrate opaque projection: {source_projection}")
+            projection_moves.append((app, source_projection))
+
+    profile_updates = 0
+    for profile in load_profiles(con):
+        payload = profile["payload"]
+        if not isinstance(payload, dict):
+            continue
+        skills = payload.get("skills")
+        if not isinstance(skills, dict):
+            continue
+        if any(isinstance(ids, list) and request.source_id in ids for ids in skills.values()):
+            profile_updates += 1
+
+    print("[dry-run] migrate plan:" if not request.apply else "migrate plan:")
+    print(f"  id {request.source_id} -> {request.target_id}")
+    print(f"  directory {source_directory} -> {request.directory}")
+    print(f"  preserve enable flags; rewrite {profile_updates} profile snapshot(s)")
+    if not request.apply:
+        con.close()
+        return
+
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    backup = db_path(home).with_name(f"cc-switch.db.pre-skill-migrate-{stamp}")
+    shutil.copy2(db_path(home), backup)
+    renamed_leaf = False
+    if source_directory != request.directory and source_leaf.exists():
+        source_leaf.rename(target_leaf)
+        renamed_leaf = True
+    active_leaf = target_leaf if source_directory != request.directory else source_leaf
+    content_hash = dir_hash(active_leaf)
+    try:
+        for app, column in EN_COL.items():
+            if column in row.keys() and row[column]:
+                sync_projection(active_leaf, app_skills_dir(home, app), request.directory, method)
+        con.execute("BEGIN IMMEDIATE")
+        updates = ["id=?", "name=?", "directory=?", "content_hash=?", "updated_at=?"]
+        values: list[object] = [
+            request.target_id,
+            request.name or row["name"],
+            request.directory,
+            content_hash,
+            int(time.time()),
+        ]
+        if ":" in request.target_id and not request.target_id.startswith("local:"):
+            owner, repo = request.target_id.split(":", 1)[0].split("/", 1)
+            if "repo_owner" in row.keys():
+                updates.append("repo_owner=?")
+                values.append(owner)
+            if "repo_name" in row.keys():
+                updates.append("repo_name=?")
+                values.append(repo)
+        values.append(request.source_id)
+        con.execute(
+            f"UPDATE skills SET {', '.join(updates)} WHERE id=?",
+            values,
+        )
+        for profile in load_profiles(con):
+            payload = profile["payload"]
+            if not isinstance(payload, dict):
+                continue
+            skills = payload.get("skills")
+            if not isinstance(skills, dict):
+                continue
+            changed = False
+            for app, ids in skills.items():
+                if app not in PROFILE_SKILL_APPS:
+                    continue
+                if isinstance(ids, list) and request.source_id in ids:
+                    skills[app] = [request.target_id if sid == request.source_id else sid for sid in ids]
+                    changed = True
+            if changed:
+                con.execute(
+                    "UPDATE profiles SET payload=?, updated_at=? WHERE id=?",
+                    (json.dumps(payload, ensure_ascii=False), int(time.time()), profile["id"]),
+                )
+        con.commit()
+    except (OSError, sqlite3.Error):
+        con.rollback()
+        if renamed_leaf and target_leaf.exists() and not source_leaf.exists():
+            target_leaf.rename(source_leaf)
+        con.close()
+        raise
+    con.close()
+
+    archive_root = home / ".cc-switch" / "skill-backups" / f"adapter-migrate-{stamp}"
+    for app, source_projection in projection_moves:
+        if source_directory == request.directory or not (
+            source_projection.exists() or source_projection.is_symlink()
+        ):
+            continue
+        archive_root.mkdir(parents=True, exist_ok=True)
+        source_projection.rename(archive_root / f"{app}-{source_directory}")
+
+    lp = lock_path(home)
+    if lp.is_file() and source_directory != request.directory:
+        lock_data = json.loads(lp.read_text())
+        lock_skills = lock_data.setdefault("skills", {})
+        if source_directory in lock_skills and request.directory not in lock_skills:
+            lock_skills[request.directory] = lock_skills.pop(source_directory)
+        if request.directory in lock_skills:
+            lock_skills[request.directory]["skillFolderHash"] = content_hash or ""
+            lock_skills[request.directory]["updatedAt"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()
+            )
+        lp.write_text(json.dumps(lock_data, indent=2) + "\n")
+    print(f"migrated {request.source_id} -> {request.target_id}; backup={backup}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -748,6 +929,13 @@ def main(argv: list[str] | None = None) -> int:
     pu.add_argument("--id", required=True)
     pu.add_argument("--keep-ssot", action="store_true")
     pu.add_argument("--apply", action="store_true")
+
+    pm = sub.add_parser("migrate", help="rename canonical id/directory without losing live or slots")
+    pm.add_argument("--from-id", required=True)
+    pm.add_argument("--to-id", required=True)
+    pm.add_argument("--directory", required=True)
+    pm.add_argument("--name", default=None)
+    pm.add_argument("--apply", action="store_true")
 
     args = p.parse_args(argv)
     home = (args.root or Path.home()).expanduser().resolve()
@@ -816,6 +1004,18 @@ def main(argv: list[str] | None = None) -> int:
                 skill_id=args.id,
                 keep_ssot=args.keep_ssot,
                 apply=args.apply,
+            )
+            return 0
+        elif args.cmd == "migrate":
+            migrate(
+                home,
+                MigrationRequest(
+                    source_id=args.from_id,
+                    target_id=args.to_id,
+                    directory=args.directory,
+                    name=args.name,
+                    apply=args.apply,
+                ),
             )
             return 0
     except PipeError as e:

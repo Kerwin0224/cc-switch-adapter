@@ -1,13 +1,13 @@
 # experience — 事故模式与标准处置（按需加载）
 
 **查→治→查闭环**：`doctor`（只读诊断）→ `remedy`（按 findings 分发修复）→ `doctor`（复验）。  
-**四态一致**：SSOT 目录 / DB 行 / app 投影 / profile slot 引用 —— 四者必须同步增删，任何单独改一处都会产生孤儿。
+**三态所有权 + 快照引用**：SSOT 目录 / DB 行 / app 投影是 skill 的所有权状态；profile slot 是用户快照，可独立陈旧或 dangling。
 
 ## 事故模式
 
 | 模式 | 症状 | doctor 发现 | 处置 |
 |------|------|-------------|------|
-| **孤儿残留** | DB 行在但 SSOT 目录没了；app 残留断链 symlink；profile slot 引用还在 → 项目应用时 toggle 失败 | D6 + D13（+ D9/D10） | `remedy` 自动清投影/引用；D6 需用户决策：`uninstall`（清残留）或 `register`（重建） |
+| **孤儿残留** | DB 行在但 SSOT 目录没了；app 残留断链 symlink；profile slot 引用还在 → 项目应用时 toggle 失败 | D6 + D13（+ D9/D10） | `remedy` 只给 uninstall/register 命令；profile dangling 由用户显式 `slot scrub` |
 | **SSOT 孤儿** | SSOT 有目录无 DB 行（手动拷入 / 同步产物） | D7 | `register --source <ssot>/<dir>` |
 | **断链投影** | enable=1 但 app 目录 symlink 丢失（target 被删） | D9 | `remedy` 自动 `dispatch --enable` |
 | **park 泄漏** | disable=0 但 app 目录残留 SSOT-link | D10 | `remedy` 自动 `dispatch --disable` |
@@ -43,13 +43,13 @@ python3 "$SKILL_DIR/pipe.py" register --id 'local:x' --directory x --source ... 
 **处置**：删 codex 断链 symlink → 删 DB 行 → scrub 两个 profile slot 引用；随后 `register` job-scout（install-enable claude，与已有 live 投影对齐）。doctor 复验 FATAL 0 ERROR 0。
 
 **教训**：
-- **SSOT 删除必须走 `uninstall`，禁止手删 SSOT 目录**——四态一致性靠单一入口保证。
+- **SSOT 删除必须走 `uninstall`，禁止手删 SSOT 目录**——所有权状态靠单一入口保证；快照引用由用户显式治理。
 - 桌面上/同步中装 skill 后跑一次 doctor；出现 D7（SSOT 孤儿）立即 register，避免 live 与 DB 脱节。
 - 判断"改名 vs 删除"：查 SSOT 是否有同名/近义目录 + 备份目录 + 日志；都不存在 → 删除残留，不是改名。
-- profile 是用户**当前项目**时，slot 里每个 dangling id 都会在 apply 时变成一条用户可见警告——slot 治理（scrub）与卸载强绑定，不能省。
+- profile 是用户**当前项目**时，slot 里每个 dangling id 都会在 apply 时变成一条用户可见警告；卸载不替用户改变快照，需显式 `slot scrub`。
 
 ## 原则
 
-- `remedy` 只自动做**可逆、语义明确**的修复（D9/D10/D13）；D6/D7 涉及"留 vs 删"的决策，永远给命令而非代执行。
+- `remedy` 只自动做**可逆、语义明确**的修复（D9/D10）；D6/D7/D13 涉及留、删或快照治理的决策，永远给命令而非代执行。
 - slot 子命令只改 profiles JSON，**永不碰 live**；live 只经 `dispatch` 或用户明确 `apply`。
 - 每轮处置后必须复跑 doctor 验证（查→治→查），以 `FATAL 0 ERROR 0` 收尾。

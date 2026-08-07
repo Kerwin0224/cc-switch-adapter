@@ -77,7 +77,7 @@ class TestRemedy(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("[AUTO] D9.live-link", r.stdout)
         self.assertIn("[AUTO] D10.park-leak", r.stdout)
-        self.assertIn("[AUTO] D13.slot-dangling", r.stdout)
+        self.assertIn("[CMD ] D13.slot-dangling", r.stdout)
         self.assertIn("[CMD ] D6.ssot-db", r.stdout)
         self.assertIn("--apply", r.stdout)
         self.assertIn("[dry-run]", r.stdout)
@@ -100,7 +100,7 @@ class TestRemedy(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("[FIXED] D9.live-link", r.stdout)
         self.assertIn("[FIXED] D10.park-leak", r.stdout)
-        self.assertIn("[FIXED] D13.slot-dangling", r.stdout)
+        self.assertIn("[CMD ] D13.slot-dangling", r.stdout)
         self.assertIn("doctor recheck:", r.stdout)
         # D6 row still there (decision item — command only, never auto-deleted)
         con = sqlite3.connect(self.db)
@@ -114,8 +114,7 @@ class TestRemedy(unittest.TestCase):
         )
         con.close()
         self.assertEqual(gone, 1)
-        # D13 scrubbed
-        self.assertNotIn("local:ghost", p["skills"]["claude"])
+        self.assertIn("local:ghost", p["skills"]["claude"])
         # D9 fixed: projection now exists
         self.assertTrue(
             (self.root / ".claude" / "skills" / "a").is_symlink()

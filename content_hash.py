@@ -11,6 +11,8 @@ import os
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
 
 def dir_hash(root: Path) -> str | None:
     """Return hex digest of skill directory, or None if unreadable / not a dir."""

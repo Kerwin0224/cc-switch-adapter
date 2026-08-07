@@ -60,7 +60,7 @@ python3 "$SKILL_DIR/doctor.py" --full           # 全量重算 content_hash
 | `D10.park-leak` | WARN | enable=0 仍有**指向 SSOT** 的投影 | dispatch |
 | `D11.dup-directory` | ERROR | 多行同一 directory | migrate |
 | `D12.lock` | **INFO**/hygiene | GitHub 行缺锁键等 | — |
-| `D13.slot-dangling` | ERROR | slot id 不在 skills | slot |
+| `D13.slot-dangling` | WARN | slot id 不在 skills；快照可独立陈旧 | slot |
 | `D14.slot-id` | ERROR | slot 内非法 id | slot |
 | `D15.fat-snapshot` | WARN | **仅 bound** profile 的 slot≠live → resnap candidate（**not enable**）。未绑定 profile 与 live 不同是多项目常态，**不报** | slot |
 | `D16.binding` | — | 不进 findings；写入 baseline `bind=` | — |
