@@ -13,6 +13,7 @@
 | **park 泄漏** | disable=0 但 app 目录残留 SSOT-link | D10 | `remedy` 自动 `dispatch --disable` |
 | **trio drift** | claude/codex 与 opencode 不同步（profile 只配前两者，opencode 忘对齐） | 无 D 码；`inventory.py` policy seam 报 drift | 用户点名对齐 → `dispatch` 三件套 |
 | **fat snapshot** | slot 比 live 多（离开项目 auto-save / 手改） | D15（仅绑定 profile） | 用户点名项目 → `slot resnap` / `slot scrub`；**不**自动 enable |
+| **点名删除** | 用户要求删掉某个 skill 并「清理干净」（三件套全开常见） | 无 D 码（正常态） | `uninstall --apply` 一次清行/SSOT/投影/lock；profile 无引用则零残留；仓库订阅是独立面，按仓库剩余 skill 决定去留 |
 
 ## 诊断证据链（四查）
 
@@ -77,6 +78,21 @@ R2.path 提示"DB 需更新" → 用 `pipe.py migrate` 修正 id 路径（migrat
 - 桌面上/同步中装 skill 后跑一次 doctor；出现 D7（SSOT 孤儿）立即 register，避免 live 与 DB 脱节。
 - 判断"改名 vs 删除"：查 SSOT 是否有同名/近义目录 + 备份目录 + 日志；都不存在 → 删除残留，不是改名。
 - profile 是用户**当前项目**时，slot 里每个 dangling id 都会在 apply 时变成一条用户可见警告；卸载不替用户改变快照，需显式 `slot scrub`。
+
+## 复盘：2026-08-14 wps-office 点名删除（正常卸载 + 边界确认）
+
+**现场**：用户点名删 wps-office（`lc2panda/wps-skills:skills/wps-office`，三件套全开）。删前四查：DB 行有、SSOT 有、claude/codex/opencode 三个投影 symlink 有、profile payload 无引用；lock 条目有。
+
+**处置**：`pipe.py uninstall --id ... --apply` 一次清掉 DB 行 / SSOT 目录 / 3 个投影 / lock 条目（dry-run 先列出全部删除面再落笔）。复验：DB count=0、`ls` 四路径全消失、lock 无 key、doctor FATAL 0 ERROR 0、inventory 行消失（83→82）。
+
+**边界确认（「清理干净」的取舍）**：
+- **仓库订阅不在 uninstall 范围内**——`skill_repos` 的 `lc2panda/wps-skills` 是独立关联面。先查该仓库剩余 skill（`gh api repos/lc2panda/wps-skills/contents/skills`），还有 wps-excel/wps-ppt/wps-word 三个未安装 skill → **保留订阅**，避免误伤将来可装项；用户再点名「清掉」才删订阅（`DELETE FROM skill_repos`）。
+- profile 无引用时 uninstall 零残留，无需 `slot scrub`；有引用才会产生 dangling（见 jd 事故）。
+
+**教训**：
+- 三件套全开的 skill 删除走一次 `uninstall --apply` 即闭环，别逐 app `dispatch --disable` 再手动删目录。
+- 「清理干净」= skill 本体全关联面 + 用户追加点名的仓库订阅；订阅去留先看仓库剩余内容再动。
+- 复验清单：DB count、SSOT + 各 app 投影 `ls`、lock JSON 检查、`doctor` + `inventory`。
 
 ## 原则
 
