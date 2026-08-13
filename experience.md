@@ -11,6 +11,7 @@
 | **SSOT 孤儿** | SSOT 有目录无 DB 行（手动拷入 / 同步产物） | D7 | `register --source <ssot>/<dir>` |
 | **断链投影** | enable=1 但 app 目录 symlink 丢失（target 被删） | D9 | `remedy` 自动 `dispatch --enable` |
 | **park 泄漏** | disable=0 但 app 目录残留 SSOT-link | D10 | `remedy` 自动 `dispatch --disable` |
+| **trio drift** | claude/codex 与 opencode 不同步（profile 只配前两者，opencode 忘对齐） | 无 D 码；`inventory.py` policy seam 报 drift | 用户点名对齐 → `dispatch` 三件套 |
 | **fat snapshot** | slot 比 live 多（离开项目 auto-save / 手改） | D15（仅绑定 profile） | 用户点名项目 → `slot resnap` / `slot scrub`；**不**自动 enable |
 
 ## 诊断证据链（四查）
@@ -81,4 +82,5 @@ R2.path 提示"DB 需更新" → 用 `pipe.py migrate` 修正 id 路径（migrat
 
 - `remedy` 只自动做**可逆、语义明确**的修复（D9/D10）；D6/D7/D13 涉及留、删或快照治理的决策，永远给命令而非代执行。
 - slot 子命令只改 profiles JSON，**永不碰 live**；live 只经 `dispatch` 或用户明确 `apply`。
+- 三件套同步：profile 槽位覆盖 claude/codex，opencode 用 `dispatch` 对齐；分析先跑 `inventory.py`。
 - 每轮处置后必须复跑 doctor 验证（查→治→查），以 `FATAL 0 ERROR 0` 收尾。

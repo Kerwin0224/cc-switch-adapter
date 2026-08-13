@@ -64,7 +64,8 @@ def base_home(root: Path) -> sqlite3.Connection:
 def add_skill(con, **kw):
     cols = [
         "id", "name", "description", "directory", "repo_owner", "repo_name",
-        "enabled_claude", "enabled_codex", "content_hash", "installed_at", "updated_at",
+        "enabled_claude", "enabled_codex", "enabled_gemini", "enabled_grokbuild",
+        "enabled_opencode", "enabled_hermes", "content_hash", "installed_at", "updated_at",
     ]
     defaults = {
         "description": "",
@@ -72,6 +73,10 @@ def add_skill(con, **kw):
         "repo_name": None,
         "enabled_claude": 0,
         "enabled_codex": 0,
+        "enabled_gemini": 0,
+        "enabled_grokbuild": 0,
+        "enabled_opencode": 0,
+        "enabled_hermes": 0,
         "content_hash": "abc",
         "installed_at": 1,
         "updated_at": 1,
