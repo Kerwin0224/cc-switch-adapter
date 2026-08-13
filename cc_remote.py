@@ -408,4 +408,7 @@ def remote_skill_md(
         text = gh.file_text(owner, name, f"{p}/SKILL.md")
     if text is None:
         return None
-    return text, _sha256(text)
+    # Normalize CRLF → LF before hashing: local read_text uses universal
+    # newlines (CRLF files hash as LF), so the remote side must match or
+    # every CRLF-authored SKILL.md reports stale (browser-act was the first).
+    return text, _sha256(text.replace("\r\n", "\n"))

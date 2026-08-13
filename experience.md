@@ -60,6 +60,8 @@ R2.path 提示"DB 需更新" → 用 `pipe.py migrate` 修正 id 路径（migrat
 - **`__pycache__` 计入哈希**：Rust/Python 的 dir_hash 只跳过 `.` 开头条目。本地目录有它就永远判 stale；运行 python 一律 `PYTHONDONTWRITEBYTECODE=1`，更新前清掉 SSOT 残留。
 - **cc-switch `update_skill` 保留 id/directory**：只换内容与哈希，路径漂移必须单独 `migrate`。
 - **离线/限流**：`--remote` 离线时降级为单个 WARN；用 `gh api`（认证 5000 req/h）比裸 urllib 稳。
+- **CRLF 行尾会误报 R3.stale**：本地 `read_text` 通用换行把 CRLF→LF，远程保留 CRLF，哈希永远不同（browser-act 首例）。R3 已做行尾规范化（`\r\n`→`\n`）；手写对比脚本时同样要规范化，或用目录级 dir_hash（基于原始字节，不受行尾影响）。
+- **R4.upstream 有噪声**：DRIFT_ROOTS 把仓库根目录的脚手架文件（Dockerfile、go.mod、CODEOWNERS 等）也当"skill"列出——是已知局限，看名单时只信带 SKILL.md 的条目。
 
 ## 复盘：2026-08-04 jd-coverage-review 孤儿事故
 

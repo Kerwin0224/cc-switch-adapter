@@ -693,7 +693,9 @@ class Doctor:
                             f"id={sid} local SKILL.md missing, remote exists (D6)")
                 continue
             local_text = local_md.read_text(encoding="utf-8", errors="replace")
-            if cc_remote._sha256(local_text) == remote_hash:
+            # universal newlines already turned CRLF into LF on read; match
+            # the normalized remote side (see remote_skill_md)
+            if cc_remote._sha256(local_text.replace("\r\n", "\n")) == remote_hash:
                 self._r_add("OK", "R3.stale", f"id={sid} matches upstream")
             else:
                 self._r_add("WARN", "R3.stale",
