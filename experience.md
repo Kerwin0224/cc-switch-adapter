@@ -34,6 +34,33 @@ python3 "$SKILL_DIR/pipe.py" uninstall --id 'local:x' [--apply] # 完整卸载�
 python3 "$SKILL_DIR/pipe.py" register --id 'local:x' --directory x --source ... [--app claude]
 ```
 
+## 云端 skill 更新检查（--remote + R3 之后）
+
+**触发**：用户要求检查云端来源 skill（`owner/repo:path`）是否过时、同步上游、问"作者有没有出新版"。
+
+**检查**（只读，报告 seam）：
+
+```bash
+python3 "$SKILL_DIR/doctor.py" --remote          # R1 仓库存在/归档 → R2 路径漂移 → R3 stale → R4 上游未装
+python3 "$SKILL_DIR/doctor.py" --remote --no-cache   # 绕过 <home>/.cc-switch/remote-cache.json 重查
+```
+
+R2.path 提示"DB 需更新" → 用 `pipe.py migrate` 修正 id 路径（migrate 自动重算 hash、同步投影与 profile 快照）。R4.upstream 是 INFO，是否补装由用户决定。
+
+**R3.stale 的更新流程**（作者未实现，`--remote` 只报不改）：
+
+1. **取远程快照**：`https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip` 解压到临时目录（cc-switch `download_repo` 同款；ZIP 比 codeload tarball 快，tarball 下载可能被截断且无校验）。每仓库一次，全部 skill 共用。
+2. **匹配**：按**目录名最后一段**（`rsplit('/')`，大小写不敏感）在解压树中定位 skill——天然容忍路径漂移，无需维护 id→新路径映射。
+3. **确认**：目录级 `content_hash.py dir_hash()` 对比（R3 只比 SKILL.md；references/scripts 等目录文件也会变，实测 14 个 skill 的 SKILL.md 相同但目录 hash 不同，必须目录级确认）。
+4. **覆盖**：`rsync -a --delete <快照>/ $SSOT/<directory>/`（`--delete` 清掉上游已删文件；symlink 投影自动跟随）。
+5. **同步 DB**：路径漂移 → `migrate`（先内容后 migrate，顺序反了会把旧 hash 写进 DB）；无漂移 → `UPDATE skills SET content_hash=?, updated_at=? WHERE id=?`（等价 cc-switch `update_skill` 的 persist；**不要**用 migrate 同 id 刷，会产生无谓 DB 备份）。
+6. **复验**：`doctor.py --full`（FATAL 0 ERROR 0）+ 重跑 `--remote` 确认 stale 清零。
+
+**陷阱**：
+- **`__pycache__` 计入哈希**：Rust/Python 的 dir_hash 只跳过 `.` 开头条目。本地目录有它就永远判 stale；运行 python 一律 `PYTHONDONTWRITEBYTECODE=1`，更新前清掉 SSOT 残留。
+- **cc-switch `update_skill` 保留 id/directory**：只换内容与哈希，路径漂移必须单独 `migrate`。
+- **离线/限流**：`--remote` 离线时降级为单个 WARN；用 `gh api`（认证 5000 req/h）比裸 urllib 稳。
+
 ## 复盘：2026-08-04 jd-coverage-review 孤儿事故
 
 **现场**：DB 行 `local:jd-coverage-review` 存在（enabled_codex=1），SSOT 目录已消失，`~/.codex/skills/` 留断链 symlink，`求职` profile 的 claude+codex slot 各留一条引用。项目应用 profile 时 claude toggle 该 skill → "Skill 不存在于 SSOT"。
