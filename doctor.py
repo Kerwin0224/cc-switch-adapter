@@ -16,7 +16,9 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,9 +33,17 @@ from adapter_contract import (
     is_canonical_id,
     is_safe_directory,
 )  # noqa: E402
+import cc_remote  # noqa: E402
+from cc_remote import (  # noqa: E402
+    Github,
+    RemoteError,
+    locate,
+    remote_skill_md,
+    skill_name_from_path,
+)
 
 # --- category matrix (map: Freeze residual seam decisions) ---
-# design | hygiene | policy; minor overrides OK if spirit holds
+# design | hygiene | policy | remote; minor overrides OK if spirit holds
 CODE_CATEGORY: dict[str, str] = {
     "D0.runtime": "design",
     "D1.schema": "design",  # not-unified-row is design; soft notes stay design too
@@ -53,6 +63,11 @@ CODE_CATEGORY: dict[str, str] = {
     "D14.slot-id": "design",
     "D15.fat-snapshot": "policy",
     "D16.binding": "policy",
+    # --remote checks; never FATAL, never design (report-only seam)
+    "R1.repo": "remote",
+    "R2.path": "remote",
+    "R3.stale": "remote",
+    "R4.upstream": "remote",
 }
 
 # next: verbs (not letter branches)
@@ -129,9 +144,22 @@ def verb_for(code: str, msg: str) -> str | None:
 
 
 class Doctor:
-    def __init__(self, home: Path, full_hash: bool = False):
+    def __init__(
+        self,
+        home: Path,
+        full_hash: bool = False,
+        remote: bool = False,
+        fresh: bool = False,
+        remote_base: str | None = None,
+        no_net: bool = False,
+    ):
         self.home = home.resolve()
         self.full_hash = full_hash
+        self.remote = remote
+        self.fresh = fresh
+        self.remote_base = remote_base
+        self.no_net = no_net
+        self._lock = threading.Lock()  # remote repo checks run in threads
         self.ccs = self.home / ".cc-switch"
         self.db_path = self.ccs / "cc-switch.db"
         self.settings_path = self.ccs / "settings.json"
@@ -147,11 +175,13 @@ class Doctor:
         self.n_skills = 0
         self.bound_names: set[str] = set()
         self.binding_notes: list[str] = []
+        self.r_stats: dict[str, int] = {"checked": 0, "ok": 0, "warn": 0, "err": 0}
         self._stopped = False
 
     def add(self, level: str, code: str, msg: str, category: str | None = None):
         cat = category or category_for(code)
-        self.findings.append((level, cat, code, msg))
+        with self._lock:
+            self.findings.append((level, cat, code, msg))
 
     def run(self) -> int:
         """Run all checks; return process exit code (1 only if FATAL)."""
@@ -178,6 +208,8 @@ class Doctor:
             self._d9_d10(skills, cols)
             self._d12(skills, cols)
             self._d16_d13_d15(con, skills, cols, tables)
+            if self.remote:
+                self._r_checks(skills, cols)
         finally:
             con.close()
         return self._emit()
@@ -546,6 +578,139 @@ class Doctor:
                         f"→ slot resnap candidate",
                     )
 
+    # ---- remote checks (--remote) ---------------------------------------
+    # Report-only seam: findings are category=remote, never FATAL, never
+    # design-ERROR, so `next:`/exit code semantics are unchanged offline.
+
+    def _r_add(self, level: str, code: str, msg: str) -> None:
+        self.add(level, code, msg, category="remote")
+        if level == "OK":
+            self.r_stats["ok"] += 1
+        elif level in ("WARN", "INFO"):
+            self.r_stats["warn"] += 1
+        elif level == "ERROR":
+            self.r_stats["err"] += 1
+        self.r_stats["checked"] += 1
+
+    def _r_checks(self, skills: list, cols: set[str]) -> None:
+        assert self.ssot is not None
+        if "repo_owner" not in cols or "repo_name" not in cols:
+            self.add("INFO", "R4.upstream", "no repo columns; remote checks skipped",
+                     category="remote")
+            return
+        gh = Github(
+            home=self.home,
+            base_url=self.remote_base or cc_remote.DEFAULT_API_BASE,
+            fresh=self.fresh,
+            no_net=self.no_net,
+        )
+        remote_rows = [
+            r
+            for r in skills
+            if r["repo_owner"] and r["repo_name"] and "/" in (r["id"] or "")
+            and not (r["id"] or "").startswith("local:")
+        ]
+        if not remote_rows:
+            self.add("OK", "R1.repo", "no github-sourced skills to check",
+                     category="remote")
+            return
+        # repo key -> set of skill indices
+        repos: dict[tuple[str, str], list[int]] = {}
+        for i, r in enumerate(remote_rows):
+            repos.setdefault((r["repo_owner"], r["repo_name"]), []).append(i)
+        errs: list[str] = []
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futs = {
+                ex.submit(
+                    self._r_repo, gh, owner, name,
+                    [remote_rows[i] for i in idxs],
+                ): (owner, name)
+                for (owner, name), idxs in sorted(repos.items())
+            }
+            for fut in futs:
+                try:
+                    fut.result()
+                except RemoteError as e:
+                    errs.append(str(e))
+        gh.flush_cache()
+        if errs:
+            # transport failure: one WARN, no per-skill noise
+            self.add("WARN", "R1.repo",
+                     f"remote 部分不可达，相关检查跳过: {errs[0]}；"
+                     f"稍后重跑（已成功项走缓存）",
+                     category="remote")
+
+    def _r_repo(self, gh, owner: str, name: str, rows: list) -> None:
+        meta = gh.repo_meta(owner, name)
+        if meta is None:
+            for r in rows:
+                self._r_add("ERROR", "R1.repo",
+                            f"repo {owner}/{name} 404 — 已删除或已私有化，源不可用")
+            return
+        pushed = (meta.get("pushed_at") or "")[:10]
+        if meta.get("archived"):
+            self._r_add("WARN", "R1.repo",
+                        f"repo {owner}/{name} 已归档 (pushed {pushed}) — 作者停止维护，评估替代")
+        else:
+            self._r_add("OK", "R1.repo",
+                        f"repo {owner}/{name} 存在 (pushed {pushed})")
+        # upstream sibling list for R4 — once per repo, not per skill
+        upstream_seen: set[str] = set()
+        for root in cc_remote.DRIFT_ROOTS:
+            upstream_seen.update(gh.list_dir(owner, name, root) or [])
+        for r in rows:
+            sid = r["id"]
+            path = sid.split(":", 1)[1] if ":" in sid else ""
+            verdict, target, similar = locate(gh, owner, name, path)
+            if verdict == "lost":
+                self._r_add("ERROR", "R2.path",
+                            f"id={sid} 上游不存在且探测 {len(cc_remote.DRIFT_ROOTS)} 个候选根未找到 → 源 skill 已移除")
+                continue
+            if verdict in ("moved", "single-root"):
+                kind = "单文件形式" if verdict == "single-root" else "路径漂移"
+                self._r_add("WARN", "R2.path",
+                            f"id={sid} {kind} → 上游实际位置 {target} (DB 需更新)")
+            elif verdict == "renamed":
+                self._r_add("WARN", "R2.path",
+                            f"id={sid} 原名消失，疑似替代 {target} (相似: {', '.join(similar)})")
+                continue  # 替代品非同一 skill，内容对比无「更新」语义
+            # staleness vs the resolved location
+            got = remote_skill_md(gh, owner, name, target) if target else None
+            local_md = self.ssot / r["directory"] / "SKILL.md"
+            if got is None:
+                if verdict != "same":
+                    self._r_add("ERROR", "R3.stale",
+                                f"id={sid} 新位置 {target} 无 SKILL.md")
+                continue
+            remote_text, remote_hash = got
+            if not local_md.is_file():
+                # D6 already covers the missing SSOT; note only when remote ok
+                self._r_add("WARN", "R3.stale",
+                            f"id={sid} 本地缺 SKILL.md，远端存在 (D6 关联)")
+                continue
+            local_text = local_md.read_text(encoding="utf-8", errors="replace")
+            if cc_remote._sha256(local_text) == remote_hash:
+                self._r_add("OK", "R3.stale", f"id={sid} 与上游一致")
+            else:
+                self._r_add("WARN", "R3.stale",
+                            f"id={sid} 本地落后于上游 (local {cc_remote._sha256(local_text)[:8]} vs remote {remote_hash[:8]}) → 重新安装更新")
+        self._r_upstream(owner, name, rows, upstream_seen)
+
+    def _r_upstream(self, owner: str, name: str, rows: list, seen: set[str]) -> None:
+        if not seen:
+            return
+        installed = {r["directory"] for r in rows}
+        upstream = sorted(
+            s for s in seen if s not in installed and cc_remote.looks_like_skill(s)
+        )
+        if not upstream:
+            return
+        shown = ", ".join(upstream[:cc_remote.MAX_UPSTREAM_LIST])
+        rest = len(upstream) - cc_remote.MAX_UPSTREAM_LIST
+        tail = f" +{rest} more" if rest > 0 else ""
+        self._r_add("INFO", "R4.upstream",
+                    f"{owner}/{name} 上游另有 {len(upstream)} 个未安装 skill: {shown}{tail}")
+
     def _emit(self) -> int:
         findings = sorted(
             self.findings,
@@ -559,14 +724,21 @@ class Doctor:
             f"doctor {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
         )
         bind = f"  bind={','.join(self.binding_notes)}" if self.binding_notes else ""
+        remote_tag = f" remote={'on' if self.remote else 'off'}"
         print(
             f"baseline: user_version={self.ver} ssot={self.ssot} "
-            f"sync={self.sync} skills={self.n_skills} loc={self.loc}{bind}"
+            f"sync={self.sync} skills={self.n_skills} loc={self.loc}{bind}{remote_tag}"
         )
         print(
             f"FATAL {counts['FATAL']}  ERROR {counts['ERROR']}  "
             f"WARN {counts['WARN']}  INFO {counts['INFO']}  OK {counts['OK']}"
         )
+        if self.remote:
+            print(
+                f"remote: checked={self.r_stats['checked']} "
+                f"ok={self.r_stats['ok']} warn={self.r_stats['warn']} "
+                f"err={self.r_stats['err']}"
+            )
         # category tallies for seam clarity
         design_error = 0
         hygiene_warn = 0
@@ -627,9 +799,37 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="full content_hash rehash (default: empty-hash only)",
     )
+    p.add_argument(
+        "--remote",
+        action="store_true",
+        help="check upstream GitHub repos: drift, staleness, alternatives (R1-R4)",
+    )
+    p.add_argument(
+        "--fresh",
+        action="store_true",
+        help="with --remote: bypass the remote cache",
+    )
+    p.add_argument(
+        "--remote-base-url",
+        type=str,
+        default=None,
+        help="with --remote: GitHub API base (tests use a local mock)",
+    )
+    p.add_argument(
+        "--no-net",
+        action="store_true",
+        help="with --remote: force transport failure (test/offline path)",
+    )
     args = p.parse_args(argv)
     home = args.root if args.root is not None else Path.home()
-    return Doctor(home=home, full_hash=args.full).run()
+    return Doctor(
+        home=home,
+        full_hash=args.full,
+        remote=args.remote,
+        fresh=args.fresh,
+        remote_base=args.remote_base_url,
+        no_net=args.no_net,
+    ).run()
 
 
 if __name__ == "__main__":

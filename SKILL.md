@@ -35,12 +35,20 @@ filesystem before using repository documentation.
 
 ```bash
 python3 "$SKILL_DIR/doctor.py" --root "$ROOT"       # read-only baseline
+python3 "$SKILL_DIR/doctor.py" --remote             # upstream freshness (R1-R4)
 python3 "$SKILL_DIR/remedy.py" --root "$ROOT"       # dry-run plan
 ```
 
 `SKILL_DIR` is this installed directory. `ROOT` is optional and is used only
 for an isolated fixture home. A parent `skills` directory that is a symlink is
 a fatal parent-link condition; stop and run `migrate` before any mutation.
+
+`--remote` checks every github-sourced skill against its upstream repo:
+R1 repo existence/archived, R2 path drift (probes `skills/`, `.claude/skills/`
+and similar roots when the DB path 404s; flags likely renames), R3 staleness
+(local SKILL.md vs upstream), R4 upstream skills not installed. Report-only:
+category `remote`, never FATAL, never changes exit/`next:`; offline degrades to
+a single WARN. See `doctor.md` for details.
 
 ## Commands
 
