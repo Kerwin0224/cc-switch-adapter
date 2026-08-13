@@ -43,7 +43,7 @@ TREE = {
     ("context7", "skills/find-docs/SKILL.md"): ("file", "# find-docs\nsame content\n"),
     ("drift-repo", ""): ("list", ["README.md", "skills", "old-place"]),
     ("drift-repo", "skills"): ("list", ["brand-new", "another-new"]),
-    # DB 路径是 skills/old-place，真实位置在根目录 old-place → moved
+    # DB path is skills/old-place; real location is root old-place → moved
     ("drift-repo", "old-place"): ("list", ["SKILL.md"]),
     ("drift-repo", "old-place/SKILL.md"): ("file", "# old-place\nmoved here\n"),
     ("drift-repo", "skills/brand-new/SKILL.md"): ("file", "# brand-new\n"),
@@ -216,21 +216,21 @@ class TestDoctorRemote(unittest.TestCase):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[WARN:remote\] R2.path  id=acme/drift-repo:skills/old-place 路径漂移 → 上游实际位置 old-place",
+            r"\[WARN:remote\] R2.path  id=acme/drift-repo:skills/old-place path drift → actual upstream location old-place",
         )
 
     def test_renamed_similar(self):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[WARN:remote\] R2.path  id=acme/rename-repo:pr-review 原名消失，疑似替代 review",
+            r"\[WARN:remote\] R2.path  id=acme/rename-repo:pr-review original name gone, likely replaced by review",
         )
 
     def test_stale(self):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[WARN:remote\] R3.stale  id=acme/stale-repo:skills/stale-skill 本地落后于上游",
+            r"\[WARN:remote\] R3.stale  id=acme/stale-repo:skills/stale-skill local is behind upstream",
         )
 
     def test_repo_gone(self):
@@ -244,21 +244,21 @@ class TestDoctorRemote(unittest.TestCase):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[WARN:remote\] R1.repo  repo acme/archived-repo 已归档",
+            r"\[WARN:remote\] R1.repo  repo acme/archived-repo archived",
         )
 
     def test_lost(self):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[ERROR:remote\] R2.path  id=acme/lost-repo:skills/nothing-here 上游不存在",
+            r"\[ERROR:remote\] R2.path  id=acme/lost-repo:skills/nothing-here not found upstream",
         )
 
     def test_upstream_list(self):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[INFO:remote\] R4.upstream  acme/drift-repo 上游另有 2 个未安装 skill: another-new, brand-new",
+            r"\[INFO:remote\] R4.upstream  acme/drift-repo has 2 upstream skills not installed: another-new, brand-new",
         )
 
     def test_summary_line(self):
@@ -271,7 +271,7 @@ class TestDoctorRemote(unittest.TestCase):
     def test_no_net_degrades_gracefully(self):
         r = run_doctor(self.home, "--remote", "--no-net")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("remote 部分不可达", r.stdout)
+        self.assertIn("remote partially unreachable", r.stdout)
         # no per-skill R findings when transport fails
         self.assertFalse(any(ln.startswith("[ERROR:remote]") for ln in lines(r.stdout)))
 

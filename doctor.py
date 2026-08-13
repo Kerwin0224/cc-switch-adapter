@@ -636,8 +636,8 @@ class Doctor:
         if errs:
             # transport failure: one WARN, no per-skill noise
             self.add("WARN", "R1.repo",
-                     f"remote 部分不可达，相关检查跳过: {errs[0]}；"
-                     f"稍后重跑（已成功项走缓存）",
+                     f"remote partially unreachable, some checks skipped: "
+                     f"{errs[0]}; rerun later (cached items will hit)",
                      category="remote")
 
     def _r_repo(self, gh, owner: str, name: str, rows: list) -> None:
@@ -645,15 +645,16 @@ class Doctor:
         if meta is None:
             for r in rows:
                 self._r_add("ERROR", "R1.repo",
-                            f"repo {owner}/{name} 404 — 已删除或已私有化，源不可用")
+                            f"repo {owner}/{name} 404 — deleted or made private")
             return
         pushed = (meta.get("pushed_at") or "")[:10]
         if meta.get("archived"):
             self._r_add("WARN", "R1.repo",
-                        f"repo {owner}/{name} 已归档 (pushed {pushed}) — 作者停止维护，评估替代")
+                        f"repo {owner}/{name} archived (pushed {pushed}) — "
+                        f"no longer maintained; evaluate alternatives")
         else:
             self._r_add("OK", "R1.repo",
-                        f"repo {owner}/{name} 存在 (pushed {pushed})")
+                        f"repo {owner}/{name} exists (pushed {pushed})")
         # upstream sibling list for R4 — once per repo, not per skill
         upstream_seen: set[str] = set()
         for root in cc_remote.DRIFT_ROOTS:
@@ -664,36 +665,41 @@ class Doctor:
             verdict, target, similar = locate(gh, owner, name, path)
             if verdict == "lost":
                 self._r_add("ERROR", "R2.path",
-                            f"id={sid} 上游不存在且探测 {len(cc_remote.DRIFT_ROOTS)} 个候选根未找到 → 源 skill 已移除")
+                            f"id={sid} not found upstream after probing "
+                            f"{len(cc_remote.DRIFT_ROOTS)}+ roots → removed upstream")
                 continue
             if verdict in ("moved", "single-root"):
-                kind = "单文件形式" if verdict == "single-root" else "路径漂移"
+                kind = "single-file form" if verdict == "single-root" else "path drift"
                 self._r_add("WARN", "R2.path",
-                            f"id={sid} {kind} → 上游实际位置 {target} (DB 需更新)")
+                            f"id={sid} {kind} → actual upstream location {target} "
+                            f"(DB path needs update)")
             elif verdict == "renamed":
                 self._r_add("WARN", "R2.path",
-                            f"id={sid} 原名消失，疑似替代 {target} (相似: {', '.join(similar)})")
-                continue  # 替代品非同一 skill，内容对比无「更新」语义
+                            f"id={sid} original name gone, likely replaced by "
+                            f"{target} (similar: {', '.join(similar)})")
+                continue  # a successor is a different skill; no stale compare
             # staleness vs the resolved location
             got = remote_skill_md(gh, owner, name, target) if target else None
             local_md = self.ssot / r["directory"] / "SKILL.md"
             if got is None:
                 if verdict != "same":
                     self._r_add("ERROR", "R3.stale",
-                                f"id={sid} 新位置 {target} 无 SKILL.md")
+                                f"id={sid} new location {target} has no SKILL.md")
                 continue
             remote_text, remote_hash = got
             if not local_md.is_file():
                 # D6 already covers the missing SSOT; note only when remote ok
                 self._r_add("WARN", "R3.stale",
-                            f"id={sid} 本地缺 SKILL.md，远端存在 (D6 关联)")
+                            f"id={sid} local SKILL.md missing, remote exists (D6)")
                 continue
             local_text = local_md.read_text(encoding="utf-8", errors="replace")
             if cc_remote._sha256(local_text) == remote_hash:
-                self._r_add("OK", "R3.stale", f"id={sid} 与上游一致")
+                self._r_add("OK", "R3.stale", f"id={sid} matches upstream")
             else:
                 self._r_add("WARN", "R3.stale",
-                            f"id={sid} 本地落后于上游 (local {cc_remote._sha256(local_text)[:8]} vs remote {remote_hash[:8]}) → 重新安装更新")
+                            f"id={sid} local is behind upstream "
+                            f"(local {cc_remote._sha256(local_text)[:8]} vs "
+                            f"remote {remote_hash[:8]}) → reinstall to update")
         self._r_upstream(owner, name, rows, upstream_seen)
 
     def _r_upstream(self, owner: str, name: str, rows: list, seen: set[str]) -> None:
@@ -709,7 +715,8 @@ class Doctor:
         rest = len(upstream) - cc_remote.MAX_UPSTREAM_LIST
         tail = f" +{rest} more" if rest > 0 else ""
         self._r_add("INFO", "R4.upstream",
-                    f"{owner}/{name} 上游另有 {len(upstream)} 个未安装 skill: {shown}{tail}")
+                    f"{owner}/{name} has {len(upstream)} upstream skills not "
+                    f"installed: {shown}{tail}")
 
     def _emit(self) -> int:
         findings = sorted(

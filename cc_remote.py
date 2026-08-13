@@ -32,8 +32,13 @@ sys.dont_write_bytecode = True
 
 DEFAULT_API_BASE = "https://api.github.com"
 
-# Candidate roots probed when the DB path 404s (作者重构目录时的常见迁移模式)
-DRIFT_ROOTS = ("", "skills", ".claude/skills", "skills/engineering", "skills/productivity")
+# Candidate roots probed when the DB path 404s. Only repo-agnostic layouts
+# are listed; deeper containers (e.g. skills/engineering) are discovered
+# recursively from these, so no per-repo structure is hardcoded.
+DRIFT_ROOTS = ("", "skills", ".claude/skills")
+
+# cap on discovered sub-containers probed per repo (keeps first run bounded)
+MAX_SUB_ROOT_PROBES = 12
 
 # cache TTLs (seconds)
 TTL_REPO = 24 * 3600
@@ -330,6 +335,14 @@ def locate(
     roots = list(DRIFT_ROOTS)
     try:
         root_entries = gh.list_dir(owner, name, "") or []
+        # discover nested skill containers under the generic roots (one level)
+        for base in ("skills", ".claude/skills"):
+            subs = sorted(
+                d
+                for d in (gh.list_dir(owner, name, base) or [])
+                if looks_like_skill(d)
+            )
+            roots.extend(f"{base}/{d}" for d in subs[:MAX_SUB_ROOT_PROBES])
     except RemoteError:
         raise
     if "SKILL.md" in root_entries:
