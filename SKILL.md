@@ -2,10 +2,10 @@
 name: cc-switch-adapter
 description: >
   closed-pipe adapter for registering, migrating, dispatching, diagnosing, and
-  explicitly governing skills through cc-switch. Use for skill installation,
-  scenario-profile design (建立/维护/完善 a profile: which skills should be live),
-  provider/profile changes, canonical IDs, SSOT projections, or parent-link
-  failures.
+  explicitly governing skills and MCP servers through cc-switch. Use for skill
+  installation, scenario-profile design (建立/维护/完善 a profile: which skills
+  should be live), MCP per-app enablement, harness compatibility, provider/profile
+  changes, canonical IDs, SSOT projections, or parent-link failures.
 ---
 
 # cc-switch adapter
@@ -14,6 +14,11 @@ description: >
 SSOT, one canonical DB row, per-app enable columns, and child projections.
 Runtime state is authoritative: read `settings.json`, the DB schema, and the
 filesystem before using repository documentation.
+
+**MCP branch**: Before registering, enabling, disabling, recovering, or
+onboarding an MCP through cc-switch, read `mcp-governance.md`. Its MCP-specific
+per-app policy takes priority over the skill-only 三件套 rule; it defines the
+Codex native Overlay, naming contract, recovery evidence, and new-harness path.
 
 ## 规矩（先对齐，再动手）
 
@@ -134,11 +139,12 @@ scrub`；**永不自动 enable**。身份迁移是唯一的自动 profile 编辑
 
 1. 复验 `doctor.py`：FATAL 0、design ERROR 0；hygiene / policy 项已理解，
    未隐藏。
-2. 复验 `inventory.py --profile <目标>`：差分与用户确认一致；三件套无
-   未确认 drift，无非三件套 live。
+2. **Skill 验收**：复验 `inventory.py --profile <目标>`：差分与用户确认一致；
+   三件套无未确认 drift，无非三件套 skill live。MCP 不由此项判定，必须按
+   `mcp-governance.md` 的逐列矩阵验收。
 3. `content_hash.py` 与 DB / GitHub 锁条目一致。
 4. 未手删 / 手改 SSOT、投影来修 finding——一律走 `migrate` / `register` /
    `dispatch` / 显式 `slot` 操作。
 
-见 `experience.md`、`profiles.md`、`project-slot.md`、`doctor.md`、
-`file-layout.md`、`db-schema.md`、`lock-file.md`。
+见 `mcp-governance.md`、`experience.md`、`profiles.md`、`project-slot.md`、
+`doctor.md`、`file-layout.md`、`db-schema.md`、`lock-file.md`。

@@ -2,8 +2,10 @@
 
 Agent 侧 **closed-pipe**：**park**（未点名 app）或 **install-enable**（点名 app）；**live** = 现在开了什么；**fat snapshot** → slot 卫生，不自动 enable。
 
-**runtime-first**：本机 DB/settings/磁盘。**三件套**：claude-code / codex /
+**runtime-first**：本机 DB/settings/磁盘。**三件套**（skill）：claude-code / codex /
 opencode 默认同开同关，其余 app 默认关；profile = 场景，只装该场景要用的 skill。
+**MCP**：MCP 逐 app 治理；Codex 由 native 配置自管，其他 app 保留其已验证快照。
+新增、恢复或变更 MCP 时见 `mcp-governance.md`。
 
 **查→盘→判→治→查**：`doctor` 只读基线 → `inventory` 全量盘点（开/关 + 场景槽位）
 → 判「应该开/关」→ `remedy`/`pipe` 按清单修复 → `doctor` + `inventory` 复验。
