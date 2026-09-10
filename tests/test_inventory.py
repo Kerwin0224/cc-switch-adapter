@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Inventory-seam tests for inventory.py (stdlib unittest).
 
-Covers: full scan table, non-trio live seam, trio drift seam, and the
+Covers: full scan table, non-pair live seam, pair drift seam, and the
 --profile slot-vs-live diff (live / slot-only / dangling). The fixture home
 is never mutated by the run (read-only seam).
 """
@@ -65,10 +65,10 @@ class TestInventory(unittest.TestCase):
             self.assertIn("baseline: ssot=", r.stdout)
             self.assertIn("local:alpha", r.stdout)
             self.assertIn("owner/repo:skills/beta", r.stdout)
-            self.assertIn("policy: non-trio live (default off)  1", r.stdout)
+            self.assertIn("policy: non-pair live (default off)  2", r.stdout)
+            self.assertIn("on OPENCODE  local:alpha", r.stdout)
             self.assertIn("on HERMES  local:gamma", r.stdout)
-            self.assertIn("policy: trio drift (claude/codex/opencode differ)  1", r.stdout)
-            self.assertIn("on CLAUDE,CODEX  owner/repo:skills/beta", r.stdout)
+            self.assertIn("policy: pair drift (claude vs codex differ)  0", r.stdout)
             self.assertIn("profile: 开发  claude=4  codex=1", r.stdout)
             self.assertIn("summary: skills=4", r.stdout)
 

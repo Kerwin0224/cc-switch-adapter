@@ -699,9 +699,10 @@ class Doctor:
                 self._r_add("OK", "R3.stale", f"id={sid} matches upstream")
             else:
                 self._r_add("WARN", "R3.stale",
-                            f"id={sid} local is behind upstream "
+                            f"id={sid} local differs from upstream "
                             f"(local {cc_remote._sha256(local_text)[:8]} vs "
-                            f"remote {remote_hash[:8]}) → reinstall to update")
+                            f"remote {remote_hash[:8]}) → R3 refresh flow "
+                            f"(experience.md, direction check first)")
         self._r_upstream(owner, name, rows, upstream_seen)
 
     def _r_upstream(self, owner: str, name: str, rows: list, seen: set[str]) -> None:

@@ -230,7 +230,7 @@ class TestDoctorRemote(unittest.TestCase):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[WARN:remote\] R3.stale  id=acme/stale-repo:skills/stale-skill local is behind upstream",
+            r"\[WARN:remote\] R3.stale  id=acme/stale-repo:skills/stale-skill local differs from upstream",
         )
 
     def test_repo_gone(self):

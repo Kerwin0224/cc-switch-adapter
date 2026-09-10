@@ -242,18 +242,24 @@ def ensure_ssot_leaf(
         if not (source_dir / "SKILL.md").is_file():
             raise PipeError(f"source missing SKILL.md: {source_dir}")
         if leaf.exists() and leaf.resolve() != source_dir.resolve():
-            # copy contents into leaf
+            # copy contents into leaf; symlinks stay symlinks — dereferencing
+            # would materialize e.g. this skill's own fixture links into real
+            # trees (register cc-switch-adapter from a clone = corrupted tests)
             leaf.mkdir(parents=True, exist_ok=True)
             for item in source_dir.iterdir():
                 dest = leaf / item.name
-                if item.is_dir():
+                if item.is_symlink():
+                    if dest.is_symlink() or dest.exists():
+                        dest.unlink()
+                    dest.symlink_to(item.readlink())
+                elif item.is_dir():
                     if dest.exists():
                         shutil.rmtree(dest)
-                    shutil.copytree(item, dest)
+                    shutil.copytree(item, dest, symlinks=True)
                 else:
                     shutil.copy2(item, dest)
         elif not leaf.exists():
-            shutil.copytree(source_dir, leaf)
+            shutil.copytree(source_dir, leaf, symlinks=True)
     else:
         leaf.mkdir(parents=True, exist_ok=True)
         skill_md = leaf / "SKILL.md"

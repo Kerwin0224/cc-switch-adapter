@@ -3,8 +3,9 @@
 
 Output:
   - table: one row per skill, live state per app, SSOT directory
-  - policy seams: non-trio live (default off) and trio drift
-    (claude/codex/opencode differ - default should be on all three or none)
+  - policy seams: non-pair live (default off) and pair drift
+    (claude vs codex differ - default should be on both or neither;
+    opencode is decoupled from skill governance, default off like other apps)
   - profiles: slot counts; with --profile NAME, per-ref diff
     (live / slot-only / dangling)
 
@@ -30,8 +31,8 @@ EN_COL = {
     "hermes": "enabled_hermes",
 }
 APPS = list(EN_COL)
-TRIO = ("claude", "codex", "opencode")
-NON_TRIO = [app for app in APPS if app not in TRIO]
+PAIR = ("claude", "codex")
+NON_PAIR = [app for app in APPS if app not in PAIR]
 SLOT_APPS = ("claude", "codex")
 
 
@@ -110,18 +111,18 @@ def main(argv: list[str] | None = None) -> int:
         print("{:<60} {}  {}".format(r["id"], marks, r["directory"]))
     print()
 
-    non_trio = [r for r in rows if any(r["en"][app] for app in NON_TRIO)]
-    print("policy: non-trio live (default off)  " + str(len(non_trio)))
-    for r in non_trio:
-        on = [app for app in NON_TRIO if r["en"][app]]
+    non_pair = [r for r in rows if any(r["en"][app] for app in NON_PAIR)]
+    print("policy: non-pair live (default off)  " + str(len(non_pair)))
+    for r in non_pair:
+        on = [app for app in NON_PAIR if r["en"][app]]
         print("  on " + ",".join(a.upper() for a in on) + "  " + r["id"])
 
     drift = []
     for r in rows:
-        on = [app for app in TRIO if r["en"][app]]
-        if on and len(on) < len(TRIO):
+        on = [app for app in PAIR if r["en"][app]]
+        if on and len(on) < len(PAIR):
             drift.append((r, on))
-    print("policy: trio drift (claude/codex/opencode differ)  " + str(len(drift)))
+    print("policy: pair drift (claude vs codex differ)  " + str(len(drift)))
     for r, on in drift:
         print("  on " + ",".join(a.upper() for a in on) + "  " + r["id"])
     print()

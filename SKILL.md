@@ -17,13 +17,14 @@ filesystem before using repository documentation.
 
 **MCP branch**: Before registering, enabling, disabling, recovering, or
 onboarding an MCP through cc-switch, read `mcp-governance.md`. Its MCP-specific
-per-app policy takes priority over the skill-only 三件套 rule; it defines the
+per-app policy takes priority over the skill-only claude/codex pair rule; it defines the
 Codex native Overlay, naming contract, recovery evidence, and new-harness path.
 
 ## 规矩（先对齐，再动手）
 
-- **三件套**：主力工具 claude-code / codex / opencode 默认同时启用；其余 app
-  （gemini / grokbuild / hermes / claude-desktop / openclaw）默认关闭。
+- **主力 pair**：claude-code / codex 默认同开同关；其余 app（opencode /
+  gemini / grokbuild / hermes / claude-desktop / openclaw）默认关闭——
+  opencode 已从 skill 治理解耦（2026-08-25），与普通 app 同待遇。
 - **场景 = profile**：每个 profile 是一个场景（开发 / 求职 / 办公 / 视频 /
   运维 / GSW…），只装该场景要用的 skill；通用核心（本 adapter、
   writing-for-agents）随每个场景。
@@ -63,8 +64,8 @@ python3 "$SKILL_DIR/inventory.py" --profile 开发   # 加：该场景槽位 vs 
 
 对照全表逐条给出「应该开 / 应该关」：
 
-- **三件套**：非三件套 app 上的 live 默认该关；claude / codex / opencode
-  默认同开同关，不一致（trio drift）是待对齐项。
+- **主力 pair**：pair 之外的 app（含 opencode）上的 live 默认该关；claude 与
+  codex 默认同开同关，不一致（pair drift）是待对齐项。
 - **场景**：按目标 profile 的场景挑 skill——场景要用的该开、已开但场景不
   需要的该关、场景需要但未装的先 `register`。
 - 每条写明依据（policy / 场景 / 依赖），组成待办清单。
@@ -82,8 +83,11 @@ python3 "$SKILL_DIR/remedy.py" [--apply]          # doctor finding 的闭环修�
 
 - profile 槽位只改 profiles JSON，永不直接改 live；live 只经 `dispatch`
   或用户明确 apply。
-- **三件套同步**：profile 槽位覆盖 claude / codex，opencode 用 `dispatch`
-  对齐同一集合——opencode 不写进 profile 数组。
+- **pair 同步**：live 集合以 profile 槽位（claude / codex）为准；opencode
+  不参与 skill 对齐，保持默认关，不做 dispatch。
+- **R3.stale（云端过时）**的更新走 experience.md「R3.stale 的更新流程」：
+  第 0 步先判方向（本地领先即停），rsync 覆盖刷 hash，禁 uninstall+register
+  刷版本——2026-08-25 与 2026-09-10 两次事故都是这条被跳过。
 - 完成准则：清单每一项落一个动词；未确认的偏离保持原状并报告。
 
 ### 5 复验（只读）
@@ -140,7 +144,7 @@ scrub`；**永不自动 enable**。身份迁移是唯一的自动 profile 编辑
 1. 复验 `doctor.py`：FATAL 0、design ERROR 0；hygiene / policy 项已理解，
    未隐藏。
 2. **Skill 验收**：复验 `inventory.py --profile <目标>`：差分与用户确认一致；
-   三件套无未确认 drift，无非三件套 skill live。MCP 不由此项判定，必须按
+   主力 pair 无未确认 drift，无 pair 之外 app 的 skill live。MCP 不由此项判定，必须按
    `mcp-governance.md` 的逐列矩阵验收。
 3. `content_hash.py` 与 DB / GitHub 锁条目一致。
 4. 未手删 / 手改 SSOT、投影来修 finding——一律走 `migrate` / `register` /

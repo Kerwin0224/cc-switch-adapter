@@ -39,7 +39,7 @@ cc-switch 的 MCP 行表达逐 app 路由意图。它不建立“所有 harness 
 所有权契约，属 **Overlay** 分支。这是当前治理边界，不是“Codex 永远不能使用
 cc-switch MCP”的协议能力结论；只有新的实测证据和用户确认才能改变该边界。
 
-skill 管理不适用本律：skill 仍走「三件套」（claude / codex / opencode 同开同关）。
+skill 管理不适用本律：skill 走「主力 pair」（claude / codex 同开同关）；opencode 已解耦，保持默认关。
 本节是 MCP 侧的唯一真值，`SKILL.md` 只保留指针，不重复表述。
 
 ## Two-layer contract
