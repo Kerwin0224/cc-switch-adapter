@@ -23,7 +23,7 @@
 
 1. **DB 行**：`SELECT id, directory, enabled_claude, enabled_codex FROM skills WHERE id LIKE '%<name>%'`
 2. **SSOT 目录**：`ls $SSOT/<directory>`（缺失 = 孤儿残留源）
-3. **app 投影**：`ls -la ~/.claude/skills/ ~/.codex/skills/ | grep <name>`（断链 symlink 是残留标记）
+3. **app 投影**：`ls -la` 各 app 投影根（cc-switch 约定：claude → `~/.claude/skills`，codex → `~/.codex/skills`，其余 app 同理）| grep <name>（断链 symlink 是残留标记）
 4. **profile slot**：`python3 pipe.py slot list --profile <name>`（`# dangling` 标记）
 
 四查结果决定走向：查 1 有 + 查 2 无 = 孤儿残留 → 走**卸载清理**；查 2 有 + 查 1 无 = SSOT 孤儿 → 走 **register**。
@@ -61,11 +61,11 @@ R2.path 提示"DB 需更新" → 用 `pipe.py migrate` 修正 id 路径（migrat
 
 **R3.stale 的更新流程**（作者未实现，`--remote` 只报不改）：
 
-0. **方向判定（先于一切覆盖；出处见复盘档案 2026-08-25、2026-09-10）**：R3 的 "behind upstream" 只是「内容不同」的措辞化，判不了领先/落后。对任何可能被本地开发的仓库——尤其 **adapter 自身**（SKILL_DIR 即 SSOT 投影，永不进批量覆盖名单；对自身的任何 uninstall/覆盖都要先用 staging 副本执行收尾，否则砍掉的就是正在运行的 pipe.py）——先反查方向：`h = sha256(local SKILL.md 经 universal-newline 文本 encode())[:8]`，遍历上游 `git log --format=%H` 逐 commit 算 `git show <c>:SKILL.md` 同规则 hash。命中任一版本 ⇒ 本地是滞后副本，可安全覆盖；全不命中 ⇒ 本地存在未推送改动 ⇒ 停手报告用户，绝不 rsync。SSOT 不是 git clone，无快照无备份，`--delete` 覆盖即永久丢失。dry-run 的完成标准要包含方向证据，不是只有 diff 清单。
+0. **方向判定**：规范（README「维护者工作流」）下 SSOT 永是下游——内容只进不出，R3 differs 默认即「落后」，直接刷新。唯一停手信号：本地 hash 不命中上游任一历史版本 ⇒ SSOT 被违反规范地手改过（本地领先）⇒ 停手报告用户，绝不 rsync（SSOT 无快照无备份，`--delete` 覆盖即永久丢失；出处见复盘档案）。反查方法：浅 clone 上游，遍历 `git log --format=%H` 逐 commit 算 `git show <c>:SKILL.md` 经 universal-newline 规范化后的 sha256，与本地同规则 hash 对比。dry-run 的完成标准要包含方向证据，不是只有 diff 清单。
 1. **取远程快照**：`https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip` 解压到临时目录（cc-switch `download_repo` 同款；ZIP 比 codeload tarball 快，tarball 下载可能被截断且无校验）。每仓库一次，全部 skill 共用。
 2. **匹配**：按**目录名最后一段**（`rsplit('/')`，大小写不敏感）在解压树中定位 skill——天然容忍路径漂移，无需维护 id→新路径映射。
 3. **确认**：目录级 `content_hash.py dir_hash()` 对比（R3 只比 SKILL.md；references/scripts 等目录文件也会变，实测 14 个 skill 的 SKILL.md 相同但目录 hash 不同，必须目录级确认）。
-4. **覆盖**：`rsync -a --delete <快照>/ $SSOT/<directory>/`（`--delete` 清掉上游已删文件；symlink 投影自动跟随）。
+4. **覆盖**：`rsync -a --delete <快照>/ $SSOT/<directory>/`（`--delete` 清掉上游已删文件；symlink 投影自动跟随）。对 adapter 自身同样适用；**禁 uninstall 自身**——正在执行的 pipe.py 就在被替换的目录里，要收尾动自身时先用 staging 副本。
 5. **同步 DB**：路径漂移 → `migrate`（先内容后 migrate，顺序反了会把旧 hash 写进 DB）；无漂移 → `UPDATE skills SET content_hash=?, updated_at=? WHERE id=?`（等价 cc-switch `update_skill` 的 persist；**不要**用 migrate 同 id 刷，会产生无谓 DB 备份）。
 6. **复验**：`doctor.py --full`（FATAL 0 ERROR 0）+ 重跑 `--remote` 确认 stale 清零。
 

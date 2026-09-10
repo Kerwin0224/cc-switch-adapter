@@ -24,4 +24,20 @@ python3 -m unittest discover -s tests -v
 
 见 [SKILL.md](SKILL.md)。参考：`pipe.py` · `doctor.py` · `remedy.py` · `content_hash.py` · `experience.md` · `project-slot.md` · `db-schema.md` · `file-layout.md` · `lock-file.md`。
 
+## 维护者工作流（仓库 → SSOT）
+
+本仓库是 adapter 唯一的改动入口；SSOT（cc-switch `skillStorageLocation` 下的
+adapter 目录）永远只是下游，任何人都不直接编辑 SSOT 内容。
+
+1. clone 本仓库到任意位置，在 clone 里改动；
+2. 自测：`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests`；
+3. push；
+4. 把这次改动当一次普通 R3 更新刷进 SSOT：`doctor --remote` 对本仓库报
+   R3 differs → 走 `experience.md`「R3.stale 的更新流程」（rsync 覆盖 +
+   刷 content_hash）；canonical id 以 DB 行（repo_owner/repo_name）为准；
+5. `doctor` + `inventory` 复验。
+
+用户（非维护者）视角更简单：从不改 SSOT，R3 differs 即真落后，按流程刷新——
+experience.md 第 0 步的方向判定只对「SSOT 被违规手改」的罕见情况停手。
+
 MIT。cc-switch 版权归其作者。

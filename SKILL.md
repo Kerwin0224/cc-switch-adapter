@@ -54,7 +54,7 @@ R4 上游未装；不产生 FATAL、不改 `next:`，离线降级为单条 WARN�
 
 ```bash
 python3 "$SKILL_DIR/inventory.py"                 # 全表：skill × app live + 场景槽位
-python3 "$SKILL_DIR/inventory.py" --profile 开发   # 加：该场景槽位 vs live 差分
+python3 "$SKILL_DIR/inventory.py" --profile <场景>   # 加：该场景槽位 vs live 差分
 ```
 
 完成准则：得到两份答案——① 目前哪些开了、哪些没开（逐 app）；② 目标场景
@@ -76,7 +76,7 @@ python3 "$SKILL_DIR/inventory.py" --profile 开发   # 加：该场景槽位 vs 
 
 ```bash
 python3 "$SKILL_DIR/pipe.py" dispatch --id ID --app claude --enable|--disable
-python3 "$SKILL_DIR/pipe.py" slot add|remove|resnap|scrub --profile 开发 ...
+python3 "$SKILL_DIR/pipe.py" slot add|remove|resnap|scrub --profile <场景> ...
 python3 "$SKILL_DIR/pipe.py" register|migrate|uninstall ...
 python3 "$SKILL_DIR/remedy.py" [--apply]          # doctor finding 的闭环修复
 ```
@@ -86,15 +86,16 @@ python3 "$SKILL_DIR/remedy.py" [--apply]          # doctor finding 的闭环修�
 - **pair 同步**：live 集合以 profile 槽位（claude / codex）为准；opencode
   不参与 skill 对齐，保持默认关，不做 dispatch。
 - **R3.stale（云端过时）**的更新走 experience.md「R3.stale 的更新流程」：
-  第 0 步先判方向（本地领先即停），rsync 覆盖刷 hash，禁 uninstall+register
-  刷版本——2026-08-25 与 2026-09-10 两次事故都是这条被跳过。
+  rsync 覆盖刷 hash，禁 uninstall+register 刷版本。**SSOT 永是下游**——
+  用户 R3 differs 即真落后，直接刷新；改本 skill 一律走 README
+  「维护者工作流」（clone → 测试 → push → R3 刷新），不直接编辑 SSOT。
 - 完成准则：清单每一项落一个动词；未确认的偏离保持原状并报告。
 
 ### 5 复验（只读）
 
 ```bash
 python3 "$SKILL_DIR/doctor.py"
-python3 "$SKILL_DIR/inventory.py" --profile 开发
+python3 "$SKILL_DIR/inventory.py" --profile <场景>
 ```
 
 完成准则：FATAL 0、design ERROR 0；目标场景槽位与 live 的差分收敛到
