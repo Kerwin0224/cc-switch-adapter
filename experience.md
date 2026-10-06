@@ -13,7 +13,7 @@
 | **SSOT 孤儿** | SSOT 有目录无 DB 行（手动拷入 / 同步产物） | D7 | `register --source <ssot>/<dir>`；桌面装完 skill 后跑一次 doctor，见 D7 即 register |
 | **断链投影** | enable=1 但 app 目录 symlink 丢失（target 被删） | D9 | `remedy` 自动 `dispatch --enable` |
 | **park 泄漏** | disable=0 但 app 目录残留 SSOT-link | D10 | `remedy` 自动 `dispatch --disable` |
-| **pair drift** | claude 与 codex 不同步 | 无 D 码；`inventory.py` policy seam 报 drift | 用户点名对齐 → `dispatch` 双 app（trio drift 已随 opencode 解耦废止） |
+| **pair drift** | claude 与 codex 不同步 | 无 D 码；`inventory.py` policy seam 报 drift | 用户点名对齐 → `dispatch` 双 app；Hermes 用户自管，不纳入 pair/profile |
 | **fat snapshot** | slot 比 live 多（离开项目 auto-save / 手改） | D15（仅绑定 profile） | 用户点名项目 → `slot resnap` / `slot scrub`；**不**自动 enable |
 | **点名删除** | 用户要求删掉某个 skill 并「清理干净」（pair 全开常见） | 无 D 码（正常态） | `uninstall --apply` 一次清行/SSOT/投影/lock；profile 无引用则零残留 |
 
@@ -23,7 +23,7 @@
 
 1. **DB 行**：`SELECT id, directory, enabled_claude, enabled_codex FROM skills WHERE id LIKE '%<name>%'`
 2. **SSOT 目录**：`ls $SSOT/<directory>`（缺失 = 孤儿残留源）
-3. **app 投影**：`ls -la` 各 app 投影根（cc-switch 约定：claude → `~/.claude/skills`，codex → `~/.codex/skills`，其余 app 同理）| grep <name>（断链 symlink 是残留标记）
+3. **app 投影**：`ls -la` 各 app 投影根（映射见 `file-layout.md` 的 app 表，本机 override 优先）| grep <name>（断链 symlink 是残留标记）
 4. **profile slot**：`python3 pipe.py slot list --profile <name>`（`# dangling` 标记）
 
 四查结果决定走向：查 1 有 + 查 2 无 = 孤儿残留 → 走**卸载清理**；查 2 有 + 查 1 无 = SSOT 孤儿 → 走 **register**。
@@ -53,19 +53,19 @@ python3 "$SKILL_DIR/pipe.py" register --id 'local:x' --directory x --source ... 
 **检查**（只读，报告 seam）：
 
 ```bash
-python3 "$SKILL_DIR/doctor.py" --remote          # R1 仓库存在/归档 → R2 路径漂移 → R3 stale → R4 上游未装
-python3 "$SKILL_DIR/doctor.py" --remote --no-cache   # 绕过 <home>/.cc-switch/remote-cache.json 重查
+python3 "$SKILL_DIR/doctor.py" --remote          # R1 仓库存在/归档 → R2 路径漂移 → R3 stale
+python3 "$SKILL_DIR/doctor.py" --remote --fresh         # 绕过 <home>/.cc-switch/remote-cache.json 重查
 ```
 
-R2.path 提示"DB 需更新" → 用 `pipe.py migrate` 修正 id 路径（migrate 自动重算 hash、同步投影与 profile 快照）。R4.upstream 是 INFO，是否补装由用户决定。
+R2.path 提示"DB 需更新" → 用 `pipe.py migrate` 修正 id 路径（migrate 自动重算 hash、同步投影与 profile 快照）。
 
 **R3.stale 的更新流程**（作者未实现，`--remote` 只报不改）：
 
-0. **方向判定**：规范（README「维护者工作流」）下 SSOT 永是下游——内容只进不出，R3 differs 默认即「落后」，直接刷新。唯一停手信号：本地 hash 不命中上游任一历史版本 ⇒ SSOT 被违反规范地手改过（本地领先）⇒ 停手报告用户，绝不 rsync（SSOT 无快照无备份，`--delete` 覆盖即永久丢失；出处见复盘档案）。反查方法：浅 clone 上游，遍历 `git log --format=%H` 逐 commit 算 `git show <c>:SKILL.md` 经 universal-newline 规范化后的 sha256，与本地同规则 hash 对比。dry-run 的完成标准要包含方向证据，不是只有 diff 清单。
+0. **先备份，再覆盖**：刷新前把每个目标目录 `cp -R` 到临时目录（`BK=$(mktemp -d)`），不绑任何固定路径。有了备份，`rsync --delete` 就不再是「永久丢失」，方向判定不必再做——覆盖后 `diff -r "$BK/<dir>" "$SSOT/<dir>"` 让本地独有的改动现形并报告，确认后再删备份。**本 adapter 自己的目录不参与 R3**（它在 agent 目录里开发，没有上游可比，`doctor` 报 `R3.self`）。
 1. **取远程快照**：`https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip` 解压到临时目录（cc-switch `download_repo` 同款；ZIP 比 codeload tarball 快，tarball 下载可能被截断且无校验）。每仓库一次，全部 skill 共用。
 2. **匹配**：按**目录名最后一段**（`rsplit('/')`，大小写不敏感）在解压树中定位 skill——天然容忍路径漂移，无需维护 id→新路径映射。
 3. **确认**：目录级 `content_hash.py dir_hash()` 对比（R3 只比 SKILL.md；references/scripts 等目录文件也会变，实测 14 个 skill 的 SKILL.md 相同但目录 hash 不同，必须目录级确认）。
-4. **覆盖**：`rsync -a --delete <快照>/ $SSOT/<directory>/`（`--delete` 清掉上游已删文件；symlink 投影自动跟随）。对 adapter 自身同样适用；**禁 uninstall 自身**——正在执行的 pipe.py 就在被替换的目录里，要收尾动自身时先用 staging 副本。
+4. **覆盖**：`rsync -a --delete <快照>/ $SSOT/<directory>/`（`--delete` 清掉上游已删文件；symlink 投影自动跟随）。若要动 adapter 自身目录，**禁 uninstall 自身**——正在执行的 pipe.py 就在被替换的目录里，先用 staging 副本。
 5. **同步 DB**：路径漂移 → `migrate`（先内容后 migrate，顺序反了会把旧 hash 写进 DB）；无漂移 → `UPDATE skills SET content_hash=?, updated_at=? WHERE id=?`（等价 cc-switch `update_skill` 的 persist；**不要**用 migrate 同 id 刷，会产生无谓 DB 备份）。
 6. **复验**：`doctor.py --full`（FATAL 0 ERROR 0）+ 重跑 `--remote` 确认 stale 清零。
 
@@ -77,13 +77,12 @@ R2.path 提示"DB 需更新" → 用 `pipe.py migrate` 修正 id 路径（migrat
 - **cc-switch `update_skill` 保留 id/directory**：只换内容与哈希，路径漂移必须单独 `migrate`。
 - **离线/限流**：`--remote` 离线时降级为单个 WARN；用 `gh api`（认证 5000 req/h）比裸 urllib 稳。
 - **CRLF 行尾会误报 R3.stale**：本地 `read_text` 通用换行把 CRLF→LF，远程保留 CRLF，哈希永远不同（browser-act 首例）。R3 已做行尾规范化（`\r\n`→`\n`）；手写对比脚本时同样要规范化，或用目录级 dir_hash（基于原始字节，不受行尾影响）。
-- **R4.upstream 有噪声**：降级探测把仓库根目录的脚手架文件（Dockerfile、go.mod、CODEOWNERS 等）也当"skill"列出——已知局限，看名单时只信带 SKILL.md 的条目。
 
 ## 原则
 
 - `remedy` 只自动做**可逆、语义明确**的修复（D9/D10，`--apply` 只代跑 `[AUTO]`；`[CMD]` 是打印的手动命令、`[SKIP]` 是用户决策，--apply 都不碰）；D6/D7/D13 涉及留、删或快照治理的决策，永远给命令而非代执行。
 - slot 子命令只改 profiles JSON，**永不碰 live**；live 只经 `dispatch` 或用户明确 `apply`。
-- pair 同步：live 集合以 claude/codex profile 槽位为准；opencode 已解耦（2026-08-25），保持默认关；分析先跑 `inventory.py`。
+- pair 同步：live 集合以 claude/codex profile 槽位为准；opencode 已解耦（2026-08-25）并保持默认关；Hermes 无 profile，仅按用户明确指令 dispatch。分析先跑 `inventory.py`。
 - 每轮处置后必须复跑 doctor 验证（查→治→查），以 `FATAL 0 ERROR 0` 收尾。
 
 ## 复盘档案（规则的出处索引，一案一行）
@@ -94,3 +93,4 @@ R2.path 提示"DB 需更新" → 用 `pipe.py migrate` 修正 id 路径（migrat
 | 2026-08-14 | wps-office 点名删除：uninstall --apply 一次闭环；订阅因仓库尚余 3 个可装 skill 而保留 | 「删除与清理规则」整节 |
 | 2026-08-25 | adapter 批量 R3 更新打掉未推送开发内容（本地 hash 不命中上游任一 commit；APFS 快照/编辑器历史/Trash/分支全空；用户确认放弃恢复） | R3 流程第 0 步方向判定 |
 | 2026-09-10 | 同类事故第二次：批量「升级」未执行第 0 步，uninstall+register 重装 15 个 skill 把 08-25 重建的 pair 文档/脚本回滚到上游（经会话转录重放编辑恢复）；连带暴露 doctor "reinstall" 误导文案与 register 物化 symlink | SKILL.md 治步 R3 指针；doctor R3 文案改 "differs + 方向先行"；pipe.py 保 symlink；test_inventory pair 断言补齐 |
+| 2026-09-25 | 用户明确 Hermes 无 profile / 项目场景，skill 开关完全由主观选择决定 | 「规矩」Hermes 用户自管；`inventory.py` scope seam 与测试 |

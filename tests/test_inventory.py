@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Inventory-seam tests for inventory.py (stdlib unittest).
 
-Covers: full scan table, non-pair live seam, pair drift seam, and the
---profile slot-vs-live diff (live / slot-only / dangling). The fixture home
-is never mutated by the run (read-only seam).
+Covers: full scan table, default-off live seam, user-managed Hermes seam,
+pair drift seam, and the --profile slot-vs-live diff
+(live / slot-only / dangling). The fixture home is never mutated by the
+run (read-only seam).
 """
 from __future__ import annotations
 
@@ -65,9 +66,14 @@ class TestInventory(unittest.TestCase):
             self.assertIn("baseline: ssot=", r.stdout)
             self.assertIn("local:alpha", r.stdout)
             self.assertIn("owner/repo:skills/beta", r.stdout)
-            self.assertIn("policy: non-pair live (default off)  2", r.stdout)
-            self.assertIn("on OPENCODE  local:alpha", r.stdout)
-            self.assertIn("on HERMES  local:gamma", r.stdout)
+            self.assertIn("policy: default-off live (managed non-pair)  1", r.stdout)
+            policy_block, marker, scope_block = r.stdout.partition(
+                "scope: user-managed live (Hermes; no profile)  1\n"
+            )
+            self.assertTrue(marker, r.stdout)
+            self.assertIn("on OPENCODE  local:alpha", policy_block)
+            self.assertNotIn("HERMES", policy_block)
+            self.assertIn("on HERMES  local:gamma", scope_block)
             self.assertIn("policy: pair drift (claude vs codex differ)  0", r.stdout)
             self.assertIn("profile: 开发  claude=4  codex=1", r.stdout)
             self.assertIn("summary: skills=4", r.stdout)

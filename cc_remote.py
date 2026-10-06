@@ -5,7 +5,6 @@ Read-only GitHub client plus the three checks the adapter cares about:
   - repo existence / archived status      (R1)
   - path drift: DB path vs upstream tree  (R2)
   - staleness: local SKILL.md vs remote   (R3)
-  - upstream alternatives not installed   (R4)
 
 Transport: `gh api` when available (authenticated, 5000 req/h), plain urllib
 otherwise.  Results are cached under <home>/.cc-switch/remote-cache.json so a
@@ -46,10 +45,7 @@ TTL_LIST = 24 * 3600
 TTL_FILE = 6 * 3600
 CACHE_FILE = "remote-cache.json"
 
-# max upstream "not installed" entries printed per repo
-MAX_UPSTREAM_LIST = 12
-
-# entries that are repo plumbing, not skills (R4 noise filter)
+# entries that are repo plumbing, not skills
 NON_SKILL_NAMES = {
     "README.md", "LICENSE", "CHANGELOG.md", "CONTEXT.md", "AGENTS.md",
     "CLAUDE.md", "skills", "docs", "scripts", "tests", "assets", "dist",

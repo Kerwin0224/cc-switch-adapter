@@ -5,13 +5,15 @@
 
 ## 决策规则（优先级从高到低）
 
-1. **主力 pair**：claude / codex 默认同开同关；pair 之外的 app（含 opencode，
-   已于 2026-08-25 解耦）默认关。
-2. **场景边界**：只装该场景要用的 skill——多了是噪音（context load），少了是
+1. **主力 pair**：claude / codex 默认同开同关；gemini / grokbuild / opencode
+   默认关。
+2. **Hermes 用户自管**：Hermes 没有 profile 或项目场景；保持用户当前选择，
+   仅按明确指令 `dispatch`，不参与 slot / pair 对齐。
+3. **场景边界**：只装该场景要用的 skill——多了是噪音（context load），少了是
    缺功能。判断依据：读每个 skill 的 `SKILL.md` description，按场景词聚类。
-3. **通用核心**：cc-switch-adapter（自管理）、writing-for-agents（写 skill /
+4. **通用核心**：cc-switch-adapter（自管理）、writing-for-agents（写 skill /
    AGENTS 文档）随每个场景。
-4. **跨场景依赖**：一个 skill 被多个场景用时，归入它服务的主场景；重复出现
+5. **跨场景依赖**：一个 skill 被多个场景用时，归入它服务的主场景；重复出现
    是常态，不是错误。
 
 ## 当前场景（2026-08 快照，以本机 profiles 表为准）

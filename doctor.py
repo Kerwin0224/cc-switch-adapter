@@ -67,7 +67,7 @@ CODE_CATEGORY: dict[str, str] = {
     "R1.repo": "remote",
     "R2.path": "remote",
     "R3.stale": "remote",
-    "R4.upstream": "remote",
+    "R3.self": "remote",
 }
 
 # next: verbs (not letter branches)
@@ -157,6 +157,7 @@ class Doctor:
         self.full_hash = full_hash
         self.remote = remote
         self.fresh = fresh
+        self.self_directory = Path(__file__).resolve().parent.name
         self.remote_base = remote_base
         self.no_net = no_net
         self._lock = threading.Lock()  # remote repo checks run in threads
@@ -216,7 +217,7 @@ class Doctor:
 
     def _d0(self) -> None:
         if not self.settings_path.is_file():
-            self.add("FATAL", "D0.runtime", f"missing {self.settings_path}")
+            self.add("FATAL", "D0.runtime", f"缺少运行时文件 {self.settings_path}（cc-switch 可能未初始化）")
             self._stopped = True
             self.ver = -1
             self.ssot = self.home / ".agents" / "skills"
@@ -224,7 +225,7 @@ class Doctor:
             self.loc = "?"
             return
         if not self.db_path.is_file():
-            self.add("FATAL", "D0.runtime", f"missing {self.db_path}")
+            self.add("FATAL", "D0.runtime", f"缺少数据库文件 {self.db_path}（cc-switch 可能未初始化）")
             self._stopped = True
             self.ver = -1
             self.ssot = self.home / ".agents" / "skills"
@@ -234,7 +235,7 @@ class Doctor:
         try:
             cfg = json.loads(self.settings_path.read_text())
         except Exception as e:
-            self.add("FATAL", "D0.runtime", f"settings unreadable: {e}")
+            self.add("FATAL", "D0.runtime", f"settings.json 无法读取：{e}")
             self._stopped = True
             self.ver = -1
             self.ssot = self.home / ".agents" / "skills"
@@ -259,11 +260,11 @@ class Doctor:
                 )
             }
             if "skills" not in tables:
-                self.add("FATAL", "D0.runtime", "no skills table")
+                self.add("FATAL", "D0.runtime", "数据库里没有 skills 表")
                 self._stopped = True
             con.close()
         except Exception as e:
-            self.add("FATAL", "D0.runtime", str(e))
+            self.add("FATAL", "D0.runtime", f"运行时读取失败：{e}")
             self._stopped = True
             self.ver = -1
 
@@ -279,7 +280,7 @@ class Doctor:
             self.add(
                 "ERROR",
                 "D1.schema",
-                f"not unified-row: cols={sorted(cols)}",
+                f"skills 表不是统一行结构（缺 enabled_* 列），实际列 {sorted(cols)} → migrate 修复",
             )
         else:
             self.add(
@@ -292,7 +293,7 @@ class Doctor:
             self.add(
                 "WARN",
                 "D2.settings",
-                f"SSOT missing: {self.ssot} (loc={self.loc})",
+                f"SSOT 目录不存在：{self.ssot}（storageLocation={self.loc}）",
             )
         else:
             self.add(
@@ -304,7 +305,7 @@ class Doctor:
             self.add(
                 "WARN",
                 "D2.settings",
-                f"unusual skillSyncMethod={self.sync!r}",
+                f"同步方式 {self.sync!r} 不是常见的 symlink/copy",
             )
 
     def _d3(self) -> None:
@@ -313,7 +314,7 @@ class Doctor:
                 self.add(
                     "FATAL",
                     "D3.parent-link",
-                    f"app={app} path={path} -> {os.readlink(path)} → migrate",
+                    f"app={app} 的 skills 父目录整棵是符号链接 {path}（指向 {os.readlink(path)}）→ migrate 修复",
                 )
             elif path.exists():
                 self.add("OK", "D3.parent-link", f"app={app} realdir")
@@ -326,7 +327,7 @@ class Doctor:
                 self.add(
                     "ERROR",
                     "D11.dup-directory",
-                    f"directory={d!r} rows={c} → migrate",
+                    f"目录 {d!r} 被 {c} 行共用，应唯一 → migrate 分开",
                 )
         for r in skills:
             sid, directory = r["id"], r["directory"]
@@ -334,13 +335,13 @@ class Doctor:
                 self.add(
                     "ERROR",
                     "D4.canonical-id",
-                    f"id={sid!r} → migrate",
+                    f"id={sid!r} 写法不合法，应为 local:名 或 owner/repo:路径 → migrate 修正",
                 )
             if not is_safe_directory(str(directory)):
                 self.add(
                     "ERROR",
                     "D4.directory",
-                    f"id={sid!r} directory={directory!r} → migrate",
+                    f"id={sid!r} 的目录名 {directory!r} 不合法，应为单个非隐藏路径段 → migrate 修正",
                 )
             if "/" in sid and not sid.startswith("local:"):
                 ro = r["repo_owner"] if "repo_owner" in cols else None
@@ -349,14 +350,14 @@ class Doctor:
                     self.add(
                         "WARN",
                         "D5.unified-meta",
-                        f"id={sid} missing repo_owner/name",
+                        f"id={sid} 缺 repo_owner/name 字段 → migrate 补齐",
                     )
             ssot_p = self.ssot / directory
             if not ssot_p.is_dir():
                 self.add(
                     "ERROR",
                     "D6.ssot-db",
-                    f"id={sid} missing SSOT dir {ssot_p} → migrate|register",
+                    f"id={sid} 数据库有记录但 SSOT 缺目录 {ssot_p} → migrate|register 处理",
                 )
             elif not (ssot_p / "SKILL.md").exists() and not any(
                 ssot_p.glob("**/SKILL.md")
@@ -364,18 +365,18 @@ class Doctor:
                 self.add(
                     "ERROR",
                     "D6.ssot-db",
-                    f"id={sid} no SKILL.md under {ssot_p} → migrate|register",
+                    f"id={sid} 目录 {ssot_p} 下没有 SKILL.md → migrate|register 处理",
                 )
             ch = r["content_hash"] if "content_hash" in cols else None
             if not ch:
-                self.add("WARN", "D8.hash", f"id={sid} content_hash empty → migrate")
+                self.add("WARN", "D8.hash", f"id={sid} 没有内容指纹记录（hash 为空）→ migrate 补记")
             elif self.full_hash:
                 got = dir_hash(ssot_p) if ssot_p.is_dir() else None
                 if got and got != ch:
                     self.add(
                         "WARN",
                         "D8.hash",
-                        f"id={sid} hash drift → migrate",
+                        f"id={sid} 本地内容与记录的指纹不一致（改过后没更新）→ migrate 更新",
                     )
 
     def _d7(self) -> None:
@@ -396,7 +397,7 @@ class Doctor:
                 self.add(
                     "WARN",
                     "D7.db-ssot-orphan",
-                    f"SSOT/{p.name} has SKILL.md, no DB row → register",
+                    f"SSOT/{p.name} 有 SKILL.md 但数据库没有登记 → register 补登记",
                 )
 
     def _link_ok(self, app_dir: Path, name: str, ssot: Path) -> str:
@@ -436,7 +437,7 @@ class Doctor:
                         self.add(
                             "ERROR",
                             "D9.live-link",
-                            f"id={r['id']} app={app} state={st} → dispatch",
+                            f"id={r['id']} app={app} state={st} 已启用但投影不可用 → dispatch 修复",
                         )
                 else:
                     ent = app_dir / directory
@@ -456,7 +457,7 @@ class Doctor:
                         self.add(
                             "WARN",
                             "D10.park-leak",
-                            f"id={r['id']} app={app} disabled SSOT-link → dispatch",
+                            f"id={r['id']} app={app} 已停用但 SSOT 投影仍残留 → dispatch 清除",
                         )
 
     def _d12(self, skills: list, cols: set[str]) -> None:
@@ -476,14 +477,14 @@ class Doctor:
                 self.add(
                     "INFO",
                     "D12.lock",
-                    f"directory={r['directory']} github row, no lock key",
+                    f"directory={r['directory']} 是 GitHub 来源但 lock 无对应条目",
                 )
         for k in lock_skills:
             if k not in dirs:
                 self.add(
                     "INFO",
                     "D12.lock",
-                    f"lock key={k!r} no DB directory",
+                    f"lock 条目 {k!r} 在数据库无对应 directory",
                 )
 
     def _d16_d13_d15(
@@ -526,7 +527,7 @@ class Doctor:
                 self.add(
                     "ERROR",
                     "D13.slot-dangling",
-                    f"profile={row['name']!r} bad JSON → slot",
+                    f"profile={row['name']!r} 快照 JSON 损坏 → slot 修复",
                 )
                 continue
             skills_map = payload.get("skills") or {}
@@ -538,7 +539,7 @@ class Doctor:
                     self.add(
                         "ERROR",
                         "D14.slot-id",
-                        f"profile={row['name']!r} skills.{app} not list → slot",
+                        f"profile={row['name']!r} skills.{app} 不是列表，快照格式损坏 → slot 修复",
                     )
                     continue
                 slot = set(arr)
@@ -547,13 +548,13 @@ class Doctor:
                         self.add(
                             "WARN",
                             "D13.slot-dangling",
-                            f"profile={row['name']!r} app={app} id={sid!r} → slot",
+                            f"profile={row['name']!r} app={app} id={sid!r} 快照引用了已删除的技能 → slot 清理",
                         )
                     elif not is_canonical(sid):
                         self.add(
                             "ERROR",
                             "D14.slot-id",
-                            f"profile={row['name']!r} app={app} id={sid!r} → slot",
+                            f"profile={row['name']!r} app={app} id={sid!r} 快照里的 id 写法不合法 → slot 修正",
                         )
                 # Different unbound profiles *should* differ from current live.
                 # Only the bound profile's slot vs live is actionable noise/hygiene.
@@ -567,15 +568,15 @@ class Doctor:
                     self.add(
                         "WARN",
                         "D15.fat-snapshot",
-                        f"profile={row['name']!r} app={app} fat={len(fat)} "
-                        f"(slot>live) → slot resnap candidate, not enable",
+                        f"profile={row['name']!r} app={app} 快照比实际多 {len(fat)} 个"
+                        f"（记着但已没开）→ slot resnap 对齐快照，不会自动开启",
                     )
                 if missing and app in SLOT_APPS:
                     self.add(
                         "WARN",
                         "D15.fat-snapshot",
-                        f"profile={row['name']!r} app={app} live_only={len(missing)} "
-                        f"→ slot resnap candidate",
+                        f"profile={row['name']!r} app={app} 实开着 {len(missing)} 个"
+                        f"但没存进快照 → slot resnap 收进快照，不会自动开启",
                     )
 
     # ---- remote checks (--remote) ---------------------------------------
@@ -595,7 +596,7 @@ class Doctor:
     def _r_checks(self, skills: list, cols: set[str]) -> None:
         assert self.ssot is not None
         if "repo_owner" not in cols or "repo_name" not in cols:
-            self.add("INFO", "R4.upstream", "no repo columns; remote checks skipped",
+            self.add("INFO", "R1.repo", "没有 repo 字段，跳过云端检查",
                      category="remote")
             return
         gh = Github(
@@ -611,7 +612,7 @@ class Doctor:
             and not (r["id"] or "").startswith("local:")
         ]
         if not remote_rows:
-            self.add("OK", "R1.repo", "no github-sourced skills to check",
+            self.add("OK", "R1.repo", "没有 GitHub 来源的 skill 需要检查",
                      category="remote")
             return
         # repo key -> set of skill indices
@@ -636,8 +637,8 @@ class Doctor:
         if errs:
             # transport failure: one WARN, no per-skill noise
             self.add("WARN", "R1.repo",
-                     f"remote partially unreachable, some checks skipped: "
-                     f"{errs[0]}; rerun later (cached items will hit)",
+                     f"云端部分检查未完成：{errs[0]}；稍后重试"
+                     f"（缓存命中的不受影响）",
                      category="remote")
 
     def _r_repo(self, gh, owner: str, name: str, rows: list) -> None:
@@ -645,81 +646,65 @@ class Doctor:
         if meta is None:
             for r in rows:
                 self._r_add("ERROR", "R1.repo",
-                            f"repo {owner}/{name} 404 — deleted or made private")
+                            f"仓库 {owner}/{name} 404，已删除或转私有")
             return
         pushed = (meta.get("pushed_at") or "")[:10]
         if meta.get("archived"):
             self._r_add("WARN", "R1.repo",
-                        f"repo {owner}/{name} archived (pushed {pushed}) — "
-                        f"no longer maintained; evaluate alternatives")
+                        f"仓库 {owner}/{name} 已归档（最后推送 {pushed}），"
+                        f"已停止维护，考虑替代")
         else:
             self._r_add("OK", "R1.repo",
-                        f"repo {owner}/{name} exists (pushed {pushed})")
-        # upstream sibling list for R4 — once per repo, not per skill
-        upstream_seen: set[str] = set()
-        for root in cc_remote.DRIFT_ROOTS:
-            upstream_seen.update(gh.list_dir(owner, name, root) or [])
+                        f"仓库 {owner}/{name} 正常（最后推送 {pushed}）")
         for r in rows:
             sid = r["id"]
             path = sid.split(":", 1)[1] if ":" in sid else ""
             verdict, target, similar = locate(gh, owner, name, path)
             if verdict == "lost":
                 self._r_add("ERROR", "R2.path",
-                            f"id={sid} not found upstream after probing "
-                            f"{len(cc_remote.DRIFT_ROOTS)}+ roots → removed upstream")
+                            f"id={sid} 上游找不到（探测 {len(cc_remote.DRIFT_ROOTS)}"
+                            f"+ 个候选根），已从上游移除")
                 continue
             if verdict in ("moved", "single-root"):
-                kind = "single-file form" if verdict == "single-root" else "path drift"
+                detail = "单文件形式" if verdict == "single-root" else "路径漂移"
                 self._r_add("WARN", "R2.path",
-                            f"id={sid} {kind} → actual upstream location {target} "
-                            f"(DB path needs update)")
+                            f"id={sid} 上游位置变了（{detail}），现在在 {target}"
+                            f"（数据库路径需更新）")
             elif verdict == "renamed":
                 self._r_add("WARN", "R2.path",
-                            f"id={sid} original name gone, likely replaced by "
-                            f"{target} (similar: {', '.join(similar)})")
+                            f"id={sid} 原名在上游已消失，疑似被 {target} 取代"
+                            f"（相近：{', '.join(similar)}）")
                 continue  # a successor is a different skill; no stale compare
             # staleness vs the resolved location
             got = remote_skill_md(gh, owner, name, target) if target else None
             local_md = self.ssot / r["directory"] / "SKILL.md"
+            if r["directory"] == self.self_directory:
+                self._r_add("INFO", "R3.self",
+                            f"id={sid} 有未推送的本地改动（正常：adapter 在 "
+                            f"agent 目录开发，GitHub 只是发布出口）")
+                continue
             if got is None:
                 if verdict != "same":
                     self._r_add("ERROR", "R3.stale",
-                                f"id={sid} new location {target} has no SKILL.md")
+                                f"id={sid} 新位置 {target} 没有 SKILL.md")
                 continue
             remote_text, remote_hash = got
             if not local_md.is_file():
                 # D6 already covers the missing SSOT; note only when remote ok
                 self._r_add("WARN", "R3.stale",
-                            f"id={sid} local SKILL.md missing, remote exists (D6)")
+                            f"id={sid} 本地缺 SKILL.md 但上游存在（见 D6）")
                 continue
             local_text = local_md.read_text(encoding="utf-8", errors="replace")
             # universal newlines already turned CRLF into LF on read; match
             # the normalized remote side (see remote_skill_md)
             if cc_remote._sha256(local_text.replace("\r\n", "\n")) == remote_hash:
-                self._r_add("OK", "R3.stale", f"id={sid} matches upstream")
+                self._r_add("OK", "R3.stale", f"id={sid} 与上游一致")
             else:
                 self._r_add("WARN", "R3.stale",
-                            f"id={sid} local differs from upstream "
-                            f"(local {cc_remote._sha256(local_text)[:8]} vs "
-                            f"remote {remote_hash[:8]}) → R3 refresh flow "
-                            f"(experience.md, direction check first)")
-        self._r_upstream(owner, name, rows, upstream_seen)
-
-    def _r_upstream(self, owner: str, name: str, rows: list, seen: set[str]) -> None:
-        if not seen:
-            return
-        installed = {r["directory"] for r in rows}
-        upstream = sorted(
-            s for s in seen if s not in installed and cc_remote.looks_like_skill(s)
-        )
-        if not upstream:
-            return
-        shown = ", ".join(upstream[:cc_remote.MAX_UPSTREAM_LIST])
-        rest = len(upstream) - cc_remote.MAX_UPSTREAM_LIST
-        tail = f" +{rest} more" if rest > 0 else ""
-        self._r_add("INFO", "R4.upstream",
-                    f"{owner}/{name} has {len(upstream)} upstream skills not "
-                    f"installed: {shown}{tail}")
+                            f"id={sid} 本地与上游不一致"
+                            f"（本地 {cc_remote._sha256(local_text)[:8]} vs "
+                            f"上游 {remote_hash[:8]}）→ 按 experience.md 的 "
+                            f"R3 流程刷新，先备份")
 
     def _emit(self) -> int:
         findings = sorted(
@@ -812,7 +797,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--remote",
         action="store_true",
-        help="check upstream GitHub repos: drift, staleness, alternatives (R1-R4)",
+        help="check upstream GitHub repos: drift, staleness (R1-R3)",
     )
     p.add_argument(
         "--fresh",

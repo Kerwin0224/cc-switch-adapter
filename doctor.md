@@ -9,7 +9,7 @@ SKILL_DIR=…/cc-switch-adapter   # 本 skill 目录
 python3 "$SKILL_DIR/doctor.py"                  # 真机 home
 python3 "$SKILL_DIR/doctor.py" --root /path/to/fake-home
 python3 "$SKILL_DIR/doctor.py" --full           # 全量重算 content_hash
-python3 "$SKILL_DIR/doctor.py" --remote         # 云端新鲜度检查（R1-R4）
+python3 "$SKILL_DIR/doctor.py" --remote         # 云端新鲜度检查（R1-R3）
 python3 "$SKILL_DIR/doctor.py" --remote --fresh # 忽略缓存重新拉取
 ```
 
@@ -45,7 +45,7 @@ python3 "$SKILL_DIR/doctor.py" --remote --fresh # 忽略缓存重新拉取
 | **design** | D0（缺 runtime）、D1 非 unified、D3、D4、D6、D9、D11、D13、D14 |
 | **hygiene** | D2、D5、D7、D8、D12 |
 | **policy** | D10、D15（仅 bound） |
-| **remote** | R1-R4（仅 `--remote`；报告专用，无 next 动词） |
+| **remote** | R1-R3（仅 `--remote`；报告专用，无 next 动词） |
 
 ## 检查目录（id 稳定）
 
@@ -72,7 +72,7 @@ python3 "$SKILL_DIR/doctor.py" --remote --fresh # 忽略缓存重新拉取
 | `R1.repo` | ERROR/WARN/OK | 源仓库 404（删除/私有化）→ ERROR；已归档（停止维护）→ WARN | — |
 | `R2.path` | WARN/ERROR | DB 路径 404 → 探测 5 个候选根（`''`/`skills`/`.claude/skills`/…）找新位置 → WARN 漂移；探测到相近名 → WARN 疑似替代（改名）；全无 → ERROR 源 skill 已移除 | — |
 | `R3.stale` | WARN/OK | 本地 `SKILL.md` 与上游默认分支内容不一致 → WARN（附双方 hash 前缀） | — |
-| `R4.upstream` | INFO | 上游未安装的 skill 清单（≤12 个；过滤 README/脚手架目录） | — |
+| `R3.self` | INFO | adapter 自身目录与上游不同（正常：在 agent 目录开发，GitHub 只是发布出口） | — |
 
 ## 报告格式（seam）
 
@@ -83,12 +83,17 @@ FATAL n  ERROR n  WARN n  INFO n  OK n
 remote: checked=n ok=n warn=n err=n        # 仅 --remote
 categories: design_ERROR=n hygiene_notes=n (FATAL always design-critical)
 
-[FATAL:design] D3.parent-link  app=claude  path=... → migrate
-[ERROR:design] D4.canonical-id  id='tdd' → migrate
-[WARN:remote]  R2.path  id=owner/repo:skills/x 路径漂移 → 上游新位置 skills/y (DB 需更新)
+[FATAL:design] D3.parent-link  app=claude 的 skills 父目录整棵是符号链接 /path（指向 /x）→ migrate 修复
+[ERROR:design] D4.canonical-id  id='tdd' 写法不合法，应为 local:名 或 owner/repo:路径 → migrate 修正
+[WARN:hygiene] D8.hash  id=local:x 本地内容与记录的指纹不一致（改过后没更新）→ migrate 更新
+[WARN:remote]  R2.path  id=owner/repo:skills/x 上游位置变了（路径漂移），现在在 skills/y（数据库路径需更新）
 ...
 next: <verbs | clean[; hygiene present]>
 ```
+
+- **msg 是给人读的中文说明**：一句话讲清「什么问题 → 怎么办」；CODE 编号保持稳定，
+  remedy / 测试按它分发；结构化字段（`id=` / `app=` / `profile='…'` / `SSOT/<dir>`）
+  位置固定，`→` 后第一个词是动词（`next:` 由此提取）。
 
 - **exit**：仅 **FATAL → 1**；其余 0（R 系列 ERROR 不入 `next:`、不改 exit）。  
 - **`next: clean`**：无 FATAL **且** 无 design-ERROR（hygiene/policy/remote 可并存）。  

@@ -3,9 +3,8 @@
 
 Output:
   - table: one row per skill, live state per app, SSOT directory
-  - policy seams: non-pair live (default off) and pair drift
-    (claude vs codex differ - default should be on both or neither;
-    opencode is decoupled from skill governance, default off like other apps)
+  - policy: default-off non-pair live and Claude/Codex pair drift
+  - scope: Hermes live is user-managed and has no profile/default
   - profiles: slot counts; with --profile NAME, per-ref diff
     (live / slot-only / dangling)
 
@@ -32,7 +31,8 @@ EN_COL = {
 }
 APPS = list(EN_COL)
 PAIR = ("claude", "codex")
-NON_PAIR = [app for app in APPS if app not in PAIR]
+USER_MANAGED_APPS = ("hermes",)
+DEFAULT_OFF_APPS = tuple(app for app in APPS if app not in PAIR + USER_MANAGED_APPS)
 SLOT_APPS = ("claude", "codex")
 
 
@@ -111,10 +111,16 @@ def main(argv: list[str] | None = None) -> int:
         print("{:<60} {}  {}".format(r["id"], marks, r["directory"]))
     print()
 
-    non_pair = [r for r in rows if any(r["en"][app] for app in NON_PAIR)]
-    print("policy: non-pair live (default off)  " + str(len(non_pair)))
-    for r in non_pair:
-        on = [app for app in NON_PAIR if r["en"][app]]
+    default_off = [r for r in rows if any(r["en"][app] for app in DEFAULT_OFF_APPS)]
+    print("policy: default-off live (managed non-pair)  " + str(len(default_off)))
+    for r in default_off:
+        on = [app for app in DEFAULT_OFF_APPS if r["en"][app]]
+        print("  on " + ",".join(a.upper() for a in on) + "  " + r["id"])
+
+    user_managed = [r for r in rows if any(r["en"][app] for app in USER_MANAGED_APPS)]
+    print("scope: user-managed live (Hermes; no profile)  " + str(len(user_managed)))
+    for r in user_managed:
+        on = [app for app in USER_MANAGED_APPS if r["en"][app]]
         print("  on " + ",".join(a.upper() for a in on) + "  " + r["id"])
 
     drift = []

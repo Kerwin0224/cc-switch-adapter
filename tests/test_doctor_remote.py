@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Remote-freshness tests for doctor.py --remote (R1-R4).
+"""Remote-freshness tests for doctor.py --remote (R1-R3).
 
 Uses a local mock GitHub API server (--remote-base-url) plus a temp fixture
 home cloned from fixtures/clean with github-sourced skill rows injected.
 Covers: drift detection, rename detection, staleness, repo gone/archived,
-upstream-not-installed list, cache reuse, and offline degradation.
+cache reuse, and offline degradation.
 """
 from __future__ import annotations
 
@@ -109,8 +109,12 @@ class MockGithub(BaseHTTPRequestHandler):
         pass
 
 
+class MockServer(ThreadingHTTPServer):
+    request_queue_size = 128
+
+
 def start_mock() -> tuple[ThreadingHTTPServer, str]:
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), MockGithub)
+    srv = MockServer(("127.0.0.1", 0), MockGithub)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     return srv, f"http://127.0.0.1:{srv.server_port}"
@@ -216,49 +220,42 @@ class TestDoctorRemote(unittest.TestCase):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[WARN:remote\] R2.path  id=acme/drift-repo:skills/old-place path drift → actual upstream location old-place",
+            r"\[WARN:remote\] R2.path  id=acme/drift-repo:skills/old-place 上游位置变了（路径漂移），现在在 old-place",
         )
 
     def test_renamed_similar(self):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[WARN:remote\] R2.path  id=acme/rename-repo:pr-review original name gone, likely replaced by review",
+            r"\[WARN:remote\] R2.path  id=acme/rename-repo:pr-review 原名在上游已消失，疑似被 review 取代",
         )
 
     def test_stale(self):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[WARN:remote\] R3.stale  id=acme/stale-repo:skills/stale-skill local differs from upstream",
+            r"\[WARN:remote\] R3.stale  id=acme/stale-repo:skills/stale-skill 本地与上游不一致",
         )
 
     def test_repo_gone(self):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[ERROR:remote\] R1.repo  repo acme/gone-repo 404",
+            r"\[ERROR:remote\] R1.repo  仓库 acme/gone-repo 404",
         )
 
     def test_archived(self):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[WARN:remote\] R1.repo  repo acme/archived-repo archived",
+            r"\[WARN:remote\] R1.repo  仓库 acme/archived-repo 已归档",
         )
 
     def test_lost(self):
         r = self.run_remote()
         self.assertRegex(
             r.stdout,
-            r"\[ERROR:remote\] R2.path  id=acme/lost-repo:skills/nothing-here not found upstream",
-        )
-
-    def test_upstream_list(self):
-        r = self.run_remote()
-        self.assertRegex(
-            r.stdout,
-            r"\[INFO:remote\] R4.upstream  acme/drift-repo has 2 upstream skills not installed: another-new, brand-new",
+            r"\[ERROR:remote\] R2.path  id=acme/lost-repo:skills/nothing-here 上游找不到",
         )
 
     def test_summary_line(self):
@@ -271,7 +268,7 @@ class TestDoctorRemote(unittest.TestCase):
     def test_no_net_degrades_gracefully(self):
         r = run_doctor(self.home, "--remote", "--no-net")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("remote partially unreachable", r.stdout)
+        self.assertIn("云端部分检查未完成", r.stdout)
         # no per-skill R findings when transport fails
         self.assertFalse(any(ln.startswith("[ERROR:remote]") for ln in lines(r.stdout)))
 

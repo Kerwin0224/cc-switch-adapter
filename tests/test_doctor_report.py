@@ -94,7 +94,7 @@ class TestDoctorReportSeam(unittest.TestCase):
         self.assertTrue(all(ln.startswith("[WARN:policy]") for ln in bound), bound)
         joined = "\n".join(bound).lower()
         self.assertNotIn("bulk enable", joined)
-        self.assertIn("not enable", "\n".join(bound))
+        self.assertIn("不会自动开启", "\n".join(bound))
         # D16 is baseline status, not a finding line
         self.assertFalse(any("D16.binding" in ln for ln in lines), r.stdout)
         self.assertIn("bind=", r.stdout)

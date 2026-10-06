@@ -4,7 +4,7 @@ description: >
   closed-pipe adapter for registering, migrating, dispatching, diagnosing, and
   explicitly governing skills and MCP servers through cc-switch. Use for skill
   installation, scenario-profile design (建立/维护/完善 a profile: which skills
-  should be live), MCP per-app enablement, harness compatibility, provider/profile
+  should be live), MCP per-app enablement, harness compatibility, profile
   changes, canonical IDs, SSOT projections, or parent-link failures.
 ---
 
@@ -22,14 +22,19 @@ Codex native Overlay, naming contract, recovery evidence, and new-harness path.
 
 ## 规矩（先对齐，再动手）
 
-- **主力 pair**：claude-code / codex 默认同开同关；其余 app（opencode /
-  gemini / grokbuild / hermes / claude-desktop / openclaw）默认关闭——
-  opencode 已从 skill 治理解耦（2026-08-25），与普通 app 同待遇。
+- **主力 pair**：claude-code / codex 默认同开同关；其余受管 app
+  （opencode / gemini / grokbuild）默认关闭。opencode 已从 skill 治理解耦
+  （2026-08-25），与普通受管 app 同待遇。
+- **Hermes 用户自管**：Hermes 没有 profile / 项目场景，不套用默认开关或
+  slot 对齐；仅按用户明确指令 `dispatch`。doctor 仍检查 SSOT、DB 与投影完整性。
 - **场景 = profile**：每个 profile 是一个场景（开发 / 求职 / 办公 / 视频 /
   运维 / GSW…），只装该场景要用的 skill；通用核心（本 adapter、
   writing-for-agents）随每个场景。
-- 任何「该开 / 不该开」先对齐以上两条；偏离要列明理由并等用户确认，
+- 任何「该开 / 不该开」先对齐以上规则；偏离要列明理由并等用户确认，
   绝不自行扩大或收缩 live。
+- **报告说人话**：向用户汇报 doctor / inventory 结果时，每条 finding 用一句中文
+  讲清「什么问题、影响、下一步」；D15 / D8 这类编号只作与 doctor.md 对照的附注，
+  不单独裸报。命令动词（migrate / dispatch / slot …）保持原样。
 
 ## 场景 profile 工作流（查→盘→判→治→查）
 
@@ -39,13 +44,13 @@ Codex native Overlay, naming contract, recovery evidence, and new-harness path.
 
 ```bash
 python3 "$SKILL_DIR/doctor.py"           # runtime-first 基线：finding + next:
-python3 "$SKILL_DIR/doctor.py" --remote  # 可选：云端新鲜度 R1-R4
+python3 "$SKILL_DIR/doctor.py" --remote  # 可选：云端新鲜度 R1-R3
 ```
 
 `SKILL_DIR` 是本 skill 安装目录；`--root` 只用于隔离的假 home。app `skills`
 父目录是 symlink = 致命 parent-link 条件，先 `migrate` 再动任何东西。
 `--remote` 是报告专用 seam：R1 仓库存在/归档、R2 路径漂移、R3 过时、
-R4 上游未装；不产生 FATAL、不改 `next:`，离线降级为单条 WARN。
+R3.self adapter 自身领先；不产生 FATAL、不改 `next:`，离线降级为单条 WARN。
 
 完成准则：拿到 baseline——SSOT 路径、sync 方式、live 行数、全部 finding 与
 `next:`。FATAL / design ERROR 先记入清单，本步不修。
@@ -64,8 +69,9 @@ python3 "$SKILL_DIR/inventory.py" --profile <场景>   # 加：该场景槽位 v
 
 对照全表逐条给出「应该开 / 应该关」：
 
-- **主力 pair**：pair 之外的 app（含 opencode）上的 live 默认该关；claude 与
-  codex 默认同开同关，不一致（pair drift）是待对齐项。
+- **主力 pair**：受管 non-pair app（opencode / gemini / grokbuild）上的 live
+  默认该关；claude 与 codex 默认同开同关，不一致（pair drift）是待对齐项。
+- **Hermes**：保持用户当前选择，不纳入 profile verdict 或 pair 对齐。
 - **场景**：按目标 profile 的场景挑 skill——场景要用的该开、已开但场景不
   需要的该关、场景需要但未装的先 `register`。
 - 每条写明依据（policy / 场景 / 依赖），组成待办清单。
@@ -84,11 +90,11 @@ python3 "$SKILL_DIR/remedy.py" [--apply]          # doctor finding 的闭环修�
 - profile 槽位只改 profiles JSON，永不直接改 live；live 只经 `dispatch`
   或用户明确 apply。
 - **pair 同步**：live 集合以 profile 槽位（claude / codex）为准；opencode
-  不参与 skill 对齐，保持默认关，不做 dispatch。
-- **R3.stale（云端过时）**的更新走 experience.md「R3.stale 的更新流程」：
-  rsync 覆盖刷 hash，禁 uninstall+register 刷版本。**SSOT 永是下游**——
-  用户 R3 differs 即真落后，直接刷新；改本 skill 一律走 README
-  「维护者工作流」（clone → 测试 → push → R3 刷新），不直接编辑 SSOT。
+  不参与 skill 对齐并保持默认关；Hermes 无 profile，仅按用户明确指令 dispatch。
+- **R3.stale（云端过时）** 只针对**上游别人的** skill：按 experience.md「R3.stale
+  的更新流程」刷新（rsync 覆盖 + 刷 hash，禁 uninstall+register 刷版本）。
+  **本 adapter 自身的开发直接改 agent 目录**——SSOT 就是开发处，没有
+  clone → push → 刷新这一圈。
 - 完成准则：清单每一项落一个动词；未确认的偏离保持原状并报告。
 
 ### 5 复验（只读）
@@ -145,8 +151,8 @@ scrub`；**永不自动 enable**。身份迁移是唯一的自动 profile 编辑
 1. 复验 `doctor.py`：FATAL 0、design ERROR 0；hygiene / policy 项已理解，
    未隐藏。
 2. **Skill 验收**：复验 `inventory.py --profile <目标>`：差分与用户确认一致；
-   主力 pair 无未确认 drift，无 pair 之外 app 的 skill live。MCP 不由此项判定，必须按
-   `mcp-governance.md` 的逐列矩阵验收。
+   主力 pair 无未确认 drift；受管 default-off app 无未确认 live；Hermes live
+   与用户明确选择一致。MCP 不由此项判定，必须按 `mcp-governance.md` 的逐列矩阵验收。
 3. `content_hash.py` 与 DB / GitHub 锁条目一致。
 4. 未手删 / 手改 SSOT、投影来修 finding——一律走 `migrate` / `register` /
    `dispatch` / 显式 `slot` 操作。
